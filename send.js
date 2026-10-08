@@ -1,6 +1,7 @@
 'use strict';
 /*
- * Day log page, increment 003 (2026-10-07). Shared by the page (app.js) and
+ * Day log page, increment 003 (2026-10-07; 015, 2026-10-08: the code problem is
+ * written only for the link stored now). Shared by the page (app.js) and
  * the part that keeps it working with no signal (sw.js).
  * Keeps everything in the phone's own storage (IndexedDB) and sends entries
  * that are waiting to the sheet. Nothing here knows the sheet's address
@@ -142,7 +143,7 @@ var DL = (function () {
         try { ans = JSON.parse(text); } catch (e) { ans = null; }
         if (!ans || ans.ok !== true || !Array.isArray(ans.results)) {
           if (ans && ans.error === 'not allowed') {
-            return put('kv', { when: stampNow() }, 'codeProblem').then(function () {
+            return codeProblemFor(link).then(function () {
               tell();
               throw new Error('the sheet did not accept the code');
             });
@@ -189,6 +190,21 @@ var DL = (function () {
     });
   }
 
+  // The sheet said "not allowed" to a send or check made with this link. The code
+  // problem is kept only if the link stored now is still that one, checked in the
+  // same storage step: a late answer to a send made with an old code, after the
+  // phone was linked again, changes nothing (015; Agent M, increment 014,
+  // finding 7; Q39).
+  function codeProblemFor(link) {
+    return run(['kv'], 'readwrite', function (s) {
+      var q = s.kv.get('link');
+      q.onsuccess = function () {
+        var cur = q.result;
+        if (cur && cur.url === link.url && cur.code === link.code) s.kv.put({ when: stampNow() }, 'codeProblem');
+      };
+    });
+  }
+
   // Counts for the lines at the top of the screen. Save and Undo of the same
   // entry count as one entry.
   function counts() {
@@ -206,5 +222,5 @@ var DL = (function () {
   }
 
   return { db: db, run: run, get: get, getAll: getAll, put: put, del: del,
-           sendWaiting: sendWaiting, counts: counts, stampNow: stampNow, tell: tell };
+           sendWaiting: sendWaiting, counts: counts, stampNow: stampNow, tell: tell, codeProblemFor: codeProblemFor };
 })();

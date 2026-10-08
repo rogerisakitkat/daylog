@@ -15,8 +15,17 @@
  * 013 (2026-10-08): the page's files carry no usual ones; it uses only the ones
  * stored on the phone, checked more strictly, and says so when there are none
  * (D93, D98, D102). Uses DL from send.js.
+ * 015 (2026-10-08): the six things kept on the phone are read one by one when
+ * the page opens, and anything that could not be read is never written over or
+ * deleted while the page is open (Q37, D101, D113); a link arriving is taken
+ * even then. 015-2: answers about the end of a walk that could not be read are
+ * kept, the red line stays up to date, no automatic reload while a screen could
+ * not be read, and a second full read when storage opens late (Agent N).
+ * 015-3: Undo keeps the End walk tick too, the red line says which screen holds
+ * an end that cannot be saved yet, and stops naming the green bar once a Save
+ * has replaced it (Agent N's recheck).
  */
-var PAGE_VERSION = '013-2';
+var PAGE_VERSION = '015-3';
 var SCREENS = ['Morning', 'Intraday', 'Evening'];
 var SCORE_ROWS = ['Mind', 'Body', 'Balance'];
 var MORNING_SCORES = [{ label: 'Quality', key: 'Sleep quality' }, { label: 'Amount', key: 'Sleep amount' }];
@@ -73,7 +82,9 @@ var state = {
   doneDay: null,
   tpadFor: null,
   usualsFrom: null,               // once read: 'phone', 'none', 'unreadable' or 'not read' (013)
-  reading: true                   // the opening read of the phone's storage has not finished
+  reading: true,                  // the opening read of the phone's storage has not finished
+  unread: {}                      // things kept on the phone that could not be read at opening (015):
+                                  // never written over or deleted while the page is open
 };
 
 // ------------------------------------------------------------------ dates and times
@@ -253,11 +264,12 @@ function storeDraft(now) {
   if (!state.loaded) return Promise.resolve();      // never overwrite a stored screen not yet read back
   var write = function () {
     draftTimer = null;
-    var d = clone(state.draft), m = clone(state.mdraft), e = clone(state.edraft);
+    // A stored screen that could not be read at opening is left as it is (015).
+    var w = SCREENS.filter(function (screen) { return !state.unread[draftKey(screen)]; })
+                   .map(function (screen) { return [draftKey(screen), clone(draftOf(screen))]; });
+    if (!w.length) return Promise.resolve();
     return DL.run(['kv'], 'readwrite', function (s) {
-      s.kv.put(d, 'draft');
-      s.kv.put(m, 'draft-Morning');
-      s.kv.put(e, 'draft-Evening');
+      w.forEach(function (x) { s.kv.put(x[1], x[0]); });
     }).catch(function () { /* shown at Save */ });
   };
   if (now) return write();
@@ -299,6 +311,9 @@ function endAnswered(dr) {
 // F1). A workout picked on the screen is dropped while another is running,
 // which can only happen after Undo brings one back (F2).
 function tidyEnds() {
+  // While the walk or workout running could not be read, answers about its end are
+  // kept as they are (015-2; Agent N, finding 1).
+  if (state.unread.running) return;
   var r = state.running, stale = isStale();
   var e = state.edraft, d = state.draft;
   if (e && e.endAns && (!r || e.endAns.forId !== r.id)) { e.endAns = null; settleOf('Evening', e); }
@@ -487,6 +502,18 @@ function save() {
     showNote('Pick Coffee, Water or Something else, or tap Liquids again to take it off.');
     return;
   }
+  // A walk or workout running that could not be read is never written over (015).
+  if (screen === 'Intraday' && dr.workout && dr.workout.kind && state.unread.running) {
+    showError('This phone could not read whether a walk or workout is already running, so a new one can’t be started just now. ' +
+              'Close the page and open it again, or tap Workout to take it off and save the rest.');
+    return;
+  }
+  // An end answered before, for a walk or workout that could not be read now, is kept for it (015-2).
+  if (state.unread.running && (dr.endTick || dr.endAns)) {
+    showError('This screen holds the end of a walk or workout that this phone could not read, so it can’t be saved until the phone can read it. ' +
+              'Close the page and open it again; if this keeps happening, tell Claude.');
+    return;
+  }
   // How this Save ends the running walk or workout, if it does.
   var endHow = null;
   if (endBoxOn(screen) && endAnswered(dr)) {
@@ -558,12 +585,15 @@ function save() {
   DL.run(['entries', 'outbox', 'kv'], 'readwrite', function (s) {
     if (entry) { s.entries.put(entry); s.outbox.put(out); }
     if (endV) { s.entries.put(endV); s.outbox.put(endOut); }
-    if (newRunning) s.kv.put(newRunning, 'running'); else s.kv.delete('running');
+    // Anything that could not be read at opening is left as it is (015).
+    if (!state.unread.running) { if (newRunning) s.kv.put(newRunning, 'running'); else s.kv.delete('running'); }
     s.kv.put(bar, 'lastSaved');
-    s.kv.delete(draftKey(screen));
+    if (!state.unread[draftKey(screen)]) s.kv.delete(draftKey(screen));
   }).then(function () {
     state.lastSaved = bar;
+    delete state.unread.lastSaved;    // replaced by this Save, as always (015-3; Agent N, recheck R3)
     el('error').hidden = true;
+    showUnread(false);                // the line about what could not be read stays while it applies (015-2)
     el('nothing').hidden = true;
     tidyEnds();
     storeDraft(true);                 // anything typed meanwhile is kept for the next entry
@@ -595,6 +625,11 @@ function undo() {
   var bar = state.lastSaved;
   if (bar && bar.until && Date.now() >= bar.until) { render(); return; }
   if (!bar || bar.undone || state.saving) return;
+  if (state.unread.running && (bar.started || bar.ended)) {      // never written over (015)
+    showError('This phone could not read whether a walk or workout is running, so this Save can’t be undone just now. ' +
+              'Close the page and open it again, then tap Undo.');
+    return;
+  }
   state.saving = true;
   var stamp = stampOf(new Date());
   var getV1 = bar.id ? DL.get('entries', bar.id + ':1') : Promise.resolve(null);
@@ -629,12 +664,13 @@ function undo() {
       s.kv.put(newBar, 'lastSaved');
     }).then(function () {
       state.lastSaved = newBar;
+      if (state.unread.lastSaved) { delete state.unread.lastSaved; refreshUnread(); }   // 015-3
       if (restored) state.running = restored;
       else if (bar.started) state.running = null;
     });
   }).then(function () {
     state.saving = false;
-    state.draft.endTick = false;
+    if (!state.unread.running) state.draft.endTick = false;     // kept while the walk could not be read (015-3; Agent N, recheck R1)
     tidyEnds();
     render();
     kick();
@@ -872,6 +908,14 @@ function applyLink(got) {
   if (!got) return Promise.resolve();
   if (got.bad) { showError('That link could not be read. Nothing was changed.'); return Promise.resolve(); }
   return DL.get('kv', 'link').then(function (old) {
+    // The stored link could not be read when the page opened, but can now: use it (015).
+    if (state.unread.link) {
+      delete state.unread.link;
+      state.link = old || null;
+      state.test = !!(old && old.test);
+      el('ver').textContent = 'page ' + PAGE_VERSION + (state.test ? ' · TEST' : '');
+      refreshUnread();                  // the red line no longer names the link (015-2; Agent N, finding 3)
+    }
     var link = { url: got.url, code: got.code, test: got.test, linkedAt: DL.stampNow() };
     if (old && old.confirmed && old.url !== got.url) {
       showError('This phone is already linked to your sheet. A link to a different sheet was ignored, and nothing was changed. Tell Claude.');
@@ -892,7 +936,7 @@ function applyLink(got) {
           link.confirmed = true;
           return DL.put('kv', link, 'link');
         }
-        if (r === 'refused') { state.linkNote = ''; return DL.put('kv', { when: DL.stampNow() }, 'codeProblem'); }
+        if (r === 'refused') { state.linkNote = ''; return DL.codeProblemFor(link); }
         if (r === 'unreachable') { state.linkNote = 'Linked. The sheet could not be reached just now; entries will wait until it can.'; return null; }
         state.linkNote = 'Linked. The sheet gave an unexpected answer; entries will wait and be sent again.';
         return null;
@@ -915,7 +959,7 @@ function applyLink(got) {
     clearNoteLater();
     kick();
   }, function () {
-    showError('The link could not be kept: this phone’s storage refused. Nothing was changed.');
+    showError('The link could not be kept: this phone’s storage refused. Nothing was changed.' + (unreadText() ? ' ' + unreadText() : ''));
   });
 }
 
@@ -1676,7 +1720,8 @@ function wire() {
   window.addEventListener('hashchange', function () { applyLink(takeLinkFromAddress()); });
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState === 'hidden') {
-      storeDraft(true).then(function () { if (state.reloadWhenHidden) location.reload(); });
+      // Not while a screen could not be read: what he typed there is not stored (015-2; Agent N, finding 2).
+      storeDraft(true).then(function () { if (state.reloadWhenHidden && !unreadScreen()) location.reload(); });
     } else {
       render();
       kick();
@@ -1740,6 +1785,57 @@ function limitNote(id, max, name) {
   limitTimer = setTimeout(function () { n.hidden = true; n.textContent = 'Nothing to save yet'; }, 5000);
 }
 
+// The six things kept for him on the phone, read when the page opens, with
+// what the red line calls each one if it cannot be read (015).
+var KEPT = [['draft', 'the half-filled Intraday screen'], ['lastSaved', 'the green bar of your last Save'],
+            ['link', 'the link to your sheet'], ['running', 'whether a walk or workout is running'],
+            ['draft-Morning', 'the half-filled Morning screen'], ['draft-Evening', 'the half-filled Evening screen']];
+function readKept(key) {
+  var once = function () { return DL.get('kv', key).then(function (v) { return { ok: true, value: v }; }); };
+  return once().catch(function () { return once(); }).catch(function () { return { ok: false }; });
+}
+function readAllKept() { return Promise.all(KEPT.map(function (k) { return readKept(k[0]); })); }
+function andList(a) { return a.length < 2 ? a.join('') : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1]; }
+// Screens holding an end given for a walk or workout that could not be read (015-3).
+function heldEnds() {
+  var out = [];
+  if (state.draft && (state.draft.endTick || state.draft.endAns)) out.push('Intraday');
+  if (state.edraft && state.edraft.endAns) out.push('Evening');
+  return out;
+}
+function unreadScreen() { return SCREENS.some(function (s) { return !!state.unread[draftKey(s)]; }); }
+// The red line about what could not be read, or '' when everything was (015).
+function unreadText() {
+  var missed = KEPT.filter(function (k) { return state.unread[k[0]]; }).map(function (k) { return k[1]; });
+  if (!missed.length) return '';
+  var screens = SCREENS.filter(function (s) { return state.unread[draftKey(s)]; });
+  var held = heldEnds();
+  return 'This phone could not read part of what it keeps: ' + andList(missed) + '. ' +
+         (!state.unread.running ? 'You can still save. ' :
+          !held.length ? 'You can still save, but not start or end a walk or workout. ' :
+          'A walk or workout can’t be started or ended until it can be read, and the ' + andList(held) + ' screen' +
+          (held.length > 1 ? 's, which hold' : ', which holds') + ' an end you gave, can’t be saved until then. ') +
+         (screens.length ? 'Anything you type on ' + (screens.length === 1 ? 'that screen' : 'those screens') +
+                           ' is kept only once you tap Save. ' : '') +
+         'Close the page and open it again; if this keeps happening, tell Claude.';
+}
+var unreadShown = '';
+function showUnread(scroll) {
+  var t = unreadText();
+  unreadShown = t;
+  if (!t) return;
+  if (scroll) { showError(t); return; }
+  el('error').textContent = t;
+  el('error').hidden = false;
+}
+// When something more could be read later (the link, 015-2): the line is brought up to date
+// if it is the one showing.
+function refreshUnread() {
+  var e = el('error');
+  if (e.hidden || e.textContent !== unreadShown) return;
+  if (unreadText()) showUnread(false); else { unreadShown = ''; e.hidden = true; }
+}
+
 function start() {
   var arrived = takeLinkFromAddress();
   el('ver').textContent = 'page ' + PAGE_VERSION;
@@ -1750,39 +1846,50 @@ function start() {
   // The usual ones are read on their own, so a failed read of them alone cannot
   // stop the half-filled screens, the running walk or the link being read (Agent K, W1).
   // The screen counts as loaded only once both reads are done (013).
-  var usualsRead = DL.get('kv', 'usuals').then(function (v) { return { ok: true, value: v }; },
-                                               function () { return { ok: false }; });
-  Promise.all([DL.get('kv', 'draft'), DL.get('kv', 'lastSaved'), DL.get('kv', 'link'), DL.get('kv', 'running'),
-               DL.get('kv', 'draft-Morning'), DL.get('kv', 'draft-Evening')]).then(function (a) {
+  var usualsRead = readKept('usuals');     // also tried twice (015-2; Agent N, note 5)
+  // From 015 the six things kept for him are read one by one, each tried twice,
+  // so one that cannot be read does not throw the others away (Q37). One that
+  // still cannot be read is listed in state.unread and never written over or
+  // deleted while the page is open (storeDraft, save, undo).
+  readAllKept().then(function (r) {
+    if (r.some(function (x) { return x.ok; })) return { r: r, opens: true };
+    // Nothing could be read. If storage opens now, everything is read once more (015-2; Agent N, note 4).
+    return DL.db().then(function () {
+      return readAllKept().then(function (r2) {
+        usualsRead = usualsRead.then(function (u) { return u.ok ? u : readKept('usuals'); });
+        return { r: r2, opens: true };
+      });
+    }, function () { return { r: r, opens: false }; });
+  }).then(function (res) {
+    var r = res.r;
     return usualsRead.then(function (u) {
       state.reading = false;
       loadUsuals(u);
-      state.running = a[3] || null;
-      var d = a[0];
+      var got = {}, missed = [];
+      KEPT.forEach(function (k, i) {
+        if (r[i].ok) got[k[0]] = r[i].value;
+        else { state.unread[k[0]] = true; missed.push(k[1]); }
+      });
+      state.running = got['running'] || null;
+      var d = got['draft'];
       state.draft = (d && d.scores) ? fillDraft(d) : emptyDraft();
       settleUsualPicks(state.draft);
-      state.mdraft = fillOther(a[4], emptyMorning());
-      state.edraft = fillOther(a[5], emptyEvening());
+      state.mdraft = fillOther(got['draft-Morning'], emptyMorning());
+      state.edraft = fillOther(got['draft-Evening'], emptyEvening());
       state.loaded = true;
-      state.lastSaved = a[1] || null;
-      state.link = a[2] || null;
+      state.lastSaved = got['lastSaved'] || null;
+      state.link = got['link'] || null;
       state.test = !!(state.link && state.link.test);
       buildUsualChoices();
       render();
       askToKeepStorage();
+      if (!res.opens) {
+        showError('This phone’s storage could not be opened, so nothing can be saved. Close the page and open it again; if it keeps happening, tell Claude.');
+      } else if (missed.length) {
+        showUnread(true);
+      }
+      // A link arriving is taken even then: applyLink reads the stored link itself (Q37).
       return applyLink(arrived);
-    });
-  }, function () {
-    // Even when storage could not be opened, the usual ones that could be read are offered (Agent L, W4).
-    return usualsRead.then(function (u) {
-      state.reading = false;
-      loadUsuals(u);
-      state.draft = emptyDraft();
-      state.mdraft = emptyMorning();
-      state.edraft = emptyEvening();
-      buildUsualChoices();
-      render();
-      showError('This phone’s storage could not be opened, so nothing can be saved. Close the page and open it again; if it keeps happening, tell Claude.');
     });
   }).then(function () {
     el('ver').textContent = 'page ' + PAGE_VERSION + (state.test ? ' · TEST' : '');
