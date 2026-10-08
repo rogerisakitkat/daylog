@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2f5d8a">
+<meta name="referrer" content="no-referrer">
+<title>Day log</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="top">
+  <div id="testbar" class="testbar" hidden>TEST &middot; entries go to the Test log tab</div>
+  <nav class="heads" id="heads">
+    <button type="button" id="h-Morning" data-s="Morning">Morning<span class="hk" id="hk-Morning" hidden> &#10003;</span></button>
+    <button type="button" id="h-Intraday" data-s="Intraday" class="on">Intraday</button>
+    <button type="button" id="h-Evening" data-s="Evening">Evening<span class="hk" id="hk-Evening" hidden> &#10003;</span></button>
+  </nav>
+</header>
+
+<main>
+  <div id="status" class="status" aria-live="polite"></div>
+  <div id="error" class="error" hidden></div>
+
+  <div id="savedbar" class="savedbar" hidden>
+    <p><b id="savedtitle"></b><br><span id="savedwhat"></span></p>
+    <button type="button" id="undo" class="btn">Undo</button>
+  </div>
+
+  <div class="when">
+    <div class="d"><span id="whendate"></span><b id="whentime"></b></div>
+    <button type="button" id="edit" class="btn">Edit</button>
+  </div>
+  <div id="daynote" class="daynote" hidden></div>
+
+  <div id="pad" class="pad" hidden>
+    <label for="padinput">New time</label>
+    <input id="padinput" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" >
+    <div class="padbtns"><button type="button" id="padam" class="btn">AM</button><button type="button" id="padpm" class="btn">PM</button><button type="button" id="padcancel" class="btn quiet">Cancel</button></div>
+    <div id="padmsg" class="padmsg"></div>
+  </div>
+
+  <!-- A walk or workout still running: asked at Evening, and on Intraday once its day is over (R69, R80) -->
+  <div id="endq" class="endq" hidden>
+    <div class="t" id="endqtext"></div>
+    <div class="tbox inq">
+      <div class="trow" id="endrow"><span class="tl">Ended at</span><button type="button" class="tset" id="endset">tap to set</button></div>
+    </div>
+    <button type="button" id="endunknown" class="btn dk" aria-pressed="false">Don't know</button>
+    <div id="endqnote" class="endqnote"></div>
+  </div>
+
+  <section id="sc-Intraday">
+    <div id="scores" class="scores"></div>
+    <div class="hint">0 = your normal. Skip any row.</div>
+
+    <h3><label for="comments">Comments</label></h3>
+    <textarea id="comments" class="box" rows="3" placeholder="Type anything. Saved exactly as you type it."></textarea>
+    <div class="ticks">
+      <label class="tk" id="tk-notable"><input type="checkbox" id="notable"> Notable</label>
+      <label class="tk" id="tk-personal"><input type="checkbox" id="personal"> Personal</label>
+    </div>
+    <div id="whywrap" class="whywrap" hidden>
+      <label for="why" class="whylabel">Why notable?</label>
+      <input id="why" class="box line" type="text" placeholder="Why?">
+    </div>
+
+    <div class="grid" id="tiles">
+      <button type="button" class="tile" id="t-Shake"><span class="chk">&#10003;</span>Shake</button>
+      <button type="button" class="tile" id="t-Workout"><span class="chk">&#10003;</span><span id="lbl-Workout">Workout</span></button>
+      <button type="button" class="tile" id="t-Medicine"><span class="chk">&#10003;</span>Medicine</button>
+      <button type="button" class="tile" id="t-Liquids"><span class="chk">&#10003;</span>Liquids</button>
+      <button type="button" class="tile" id="t-Food"><span class="chk">&#10003;</span>Food</button>
+      <button type="button" class="tile" id="t-Other"><span class="chk">&#10003;</span>Other</button>
+    </div>
+    <div id="running" class="runline" hidden></div>
+    <div id="p-Workout" class="panel" hidden>
+      <div class="t">Workout: what kind?</div>
+      <div id="c-Workout"></div>
+    </div>
+    <div id="p-Shake" class="panel" hidden>
+      <div class="t">Shake</div>
+      <div id="c-Shake"></div>
+      <input id="w-Shake" class="box line inpanel" type="text" placeholder="What was it?" aria-label="What shake was it?" hidden>
+    </div>
+    <div id="p-Medicine" class="panel" hidden>
+      <div class="t">Medicine</div>
+      <div id="c-Medicine"></div>
+      <input id="w-Medicine" class="box line inpanel" type="text" placeholder="What was it?" aria-label="What medicine was it?" hidden>
+    </div>
+    <div id="p-Liquids" class="panel" hidden>
+      <div class="t">Liquids: tick any</div>
+      <div id="c-Liquids"></div>
+      <input id="w-Liquids" class="box line inpanel" type="text" placeholder="What was it?" aria-label="What drink was it?" hidden>
+    </div>
+    <div id="foodwrap" hidden>
+      <h3><label for="food">Food</label></h3>
+      <textarea id="food" class="box" rows="2" placeholder="What did you eat? You can skip this."></textarea>
+    </div>
+    <div id="otherwrap" hidden>
+      <h3><label for="other">Other</label></h3>
+      <textarea id="other" class="box" rows="2" placeholder="Anything without its own button, like a nap."></textarea>
+    </div>
+  </section>
+
+  <section id="sc-Morning" hidden>
+    <h3>Times</h3>
+    <div class="tbox" id="times-Morning"></div>
+    <h3>Sleep scores</h3>
+    <div id="scores-Morning" class="scores"></div>
+    <div class="hint">0 = your normal. Skip any row.</div>
+    <h3>Phone before bed</h3>
+    <div class="yn" id="phone">
+      <button type="button" class="ynb" data-v="Yes" aria-pressed="false"><span class="chk">&#10003;</span>Yes</button>
+      <button type="button" class="ynb" data-v="No" aria-pressed="false"><span class="chk">&#10003;</span>No</button>
+    </div>
+    <h3><label for="sleepwords">Sleep in your own words</label></h3>
+    <textarea id="sleepwords" class="box" rows="3" placeholder="Anything about the night. Saved exactly as you type it."></textarea>
+  </section>
+
+  <section id="sc-Evening" hidden>
+    <h3>The whole day</h3>
+    <div id="scores-Evening" class="scores"></div>
+    <div class="hint">0 = your normal. Skip any row.</div>
+    <h3>Bed</h3>
+    <div class="tbox" id="times-Evening"></div>
+    <h3>Today</h3>
+    <div class="ticks">
+      <label class="tk" id="tk-daynotable"><input type="checkbox" id="daynotable"> Mark today as notable</label>
+    </div>
+    <div id="daywhywrap" class="whywrap" hidden>
+      <label for="daywhy" class="whylabel">Why is today notable?</label>
+      <input id="daywhy" class="box line" type="text" placeholder="Why?">
+    </div>
+  </section>
+
+  <!-- The number pad for a time on Morning, Evening or the End box; moved under the row being set -->
+  <div id="tpad" class="pad tpad" hidden>
+    <label for="tpadinput" id="tpadlabel">Time</label>
+    <input id="tpadinput" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off">
+    <div class="padbtns"><button type="button" id="tpadam" class="btn">AM</button><button type="button" id="tpadpm" class="btn">PM</button><button type="button" id="tpadcancel" class="btn quiet">Cancel</button></div>
+    <button type="button" id="tpadclear" class="btn quiet clearbtn" hidden>Clear this time</button>
+    <div id="tpadmsg" class="padmsg"></div>
+  </div>
+
+  <button type="button" id="save" class="save">Save</button>
+  <div id="nothing" class="nothing" hidden>Nothing to save yet</div>
+</main>
+
+<footer id="ver" class="ver"></footer>
+<script src="send.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
