@@ -48,8 +48,24 @@
  * the page is stopped in the moment the comparing read takes; the lines after a Save
  * that was not made say to enter again anything missing (the screen may show the
  * other copy's version).
+ * 018 (2026-10-09): today's list under Everything else (R34, R43, R86, R87).
+ * 019 (2026-10-09): tapping an Intraday entry in today's list opens it on the Intraday
+ * screen, filled in as it stands; "Save changes" makes the next version of that entry,
+ * "Cancel" leaves it (R60, R76, R88, R89, R90: no Undo after Save changes). A change in
+ * progress is kept on the phone as "draft-fix", compared before writing like the other
+ * half-filled screens (016); the half-filled new entry waits in "draft" meanwhile.
+ * 019-2 (Agent W): the "Changes saved" bar keeps its own end time (fixUntil) and has its
+ * until in the past, so an earlier page put back by the way back never shows it or offers
+ * an Undo for it (F1); taps just after the screen jumps are ignored for a moment (W1); the
+ * Evening End box cannot end a walk while that walk is being changed (W2); an entry turned
+ * away by the sheet is no longer shown as turned away once a newer version of it has gone
+ * (W3); the check that the entry was not changed meanwhile reads two versions, not all (W4);
+ * the green bar after changing a walk says what it is (W5); entries missing a part are
+ * opened as their day and Screen say (N3); opening an entry counts as touching the page (N5).
+ * 019-3: the green bar is hidden while an entry is being changed (it showed the last Save
+ * above the banner); it comes back after Save changes or Cancel.
  */
-var PAGE_VERSION = '018-3';
+var PAGE_VERSION = '019-3';
 var SCREENS = ['Morning', 'Intraday', 'Evening'];
 var SCORE_ROWS = ['Mind', 'Body', 'Balance'];
 var MORNING_SCORES = [{ label: 'Quality', key: 'Sleep quality' }, { label: 'Amount', key: 'Sleep amount' }];
@@ -114,8 +130,11 @@ var state = {
   closeWrite: {},                 // screens written at closing without comparing, not yet known done (016-3)
   edits: {},                      // his taps and typing on each screen, counted (016-4)
   storedEdits: {},                // how many of those the stored screen holds
-  noStorage: false                // the phone's storage could not be opened at all when the page opened
+  noStorage: false,               // the phone's storage could not be opened at all when the page opened
+  fix: null,                      // an entry being changed (019): { id, base, test, orig, dr, opened }
+  fixConfirm: null                // a change to another day, asked about once (019, G019-5)
 };
+var KEY_FIX = 'draft-fix';        // where a change in progress is kept (019)
 
 // ------------------------------------------------------------------ dates and times
 
@@ -234,7 +253,19 @@ function fillOther(d, empty) {
   return d;
 }
 
-function draftOf(screen) { return screen === 'Morning' ? state.mdraft : (screen === 'Evening' ? state.edraft : state.draft); }
+// What each screen shows: on Intraday, the entry being changed while there is one (019).
+function draftOf(screen) {
+  return screen === 'Morning' ? state.mdraft : (screen === 'Evening' ? state.edraft : (state.fix ? state.fix.dr : state.draft));
+}
+function idr() { return draftOf('Intraday'); }
+// The four things kept like half-filled screens, by their key in storage (019 adds KEY_FIX).
+var SLOTS = ['draft', 'draft-Morning', 'draft-Evening', KEY_FIX];
+function valueOfKey(k) {
+  if (k === KEY_FIX) return state.fix || undefined;
+  return k === 'draft' ? state.draft : (k === 'draft-Morning' ? state.mdraft : state.edraft);
+}
+// The key his taps and typing on a screen change: the change in progress while there is one.
+function screenKey(screen) { return screen === 'Intraday' && state.fix ? KEY_FIX : draftKey(screen); }
 function setDraftOf(screen, d) {
   if (screen === 'Morning') state.mdraft = d; else if (screen === 'Evening') state.edraft = d; else state.draft = d;
 }
@@ -296,9 +327,12 @@ function storeDraft(now) {
     draftTimer = null;
     // A stored screen that could not be read at opening is left as it is (015).
     // The screens are copied now, when the write is asked for, as on 015-3 (016-2; Agent P, F1).
-    var w = SCREENS.filter(function (screen) { return !state.unread[draftKey(screen)]; }).map(function (screen) {
-      var k = draftKey(screen);
-      return { k: k, v: clone(draftOf(screen)), gen: state.gen[k], known: state.known[k], ed: state.edits[k] || 0 };
+    var w = SLOTS.filter(function (k) { return !state.unread[k]; }).map(function (k) {
+      var v = valueOfKey(k);
+      return { k: k, v: v === undefined ? undefined : clone(v), gen: state.gen[k], known: state.known[k], ed: state.edits[k] || 0 };
+    }).filter(function (x) {
+      // No change in progress, and none stored as far as this page knows: nothing to write (019).
+      return !(x.k === KEY_FIX && x.v === undefined && (x.known === undefined || x.known === '-'));
     });
     if (!w.length) return Promise.resolve();
     var lostMine = false;
@@ -311,7 +345,7 @@ function storeDraft(now) {
           if (fp(x.k, x.v) !== x.known) lostMine = true;      // it held a change of his not yet stored
           return;
         }
-        s.kv.put(x.v, x.k);
+        if (x.v === undefined) s.kv.delete(x.k); else s.kv.put(x.v, x.k);
         wrote[x.k] = x.v;
       });
       return { wrote: wrote };
@@ -336,14 +370,16 @@ function storeAtClose() {
   // Only screens holding a tap or typing of his not yet stored: a screen the page only put
   // right by itself (an old usual one, an end answer dropped) is not written without
   // comparing (016-4; Agent P, W-d).
-  var w = SCREENS.map(function (screen) { var k = draftKey(screen); return { k: k, v: clone(draftOf(screen)), ed: state.edits[k] || 0 }; })
+  var w = SLOTS.map(function (k) { var v = valueOfKey(k); return { k: k, v: v === undefined ? undefined : clone(v), ed: state.edits[k] || 0 }; })
                  .filter(function (x) {
                    return !state.unread[x.k] && x.ed !== (state.storedEdits[x.k] || 0) && fp(x.k, x.v) !== state.known[x.k];
                  });
   if (!w.length) return;
   // Until this write is known to be done, finding it in storage is not taken for another copy's change.
   w.forEach(function (x) { x.f = fp(x.k, x.v); state.closeWrite[x.k] = x.f; });
-  DL.run(['kv'], 'readwrite', function (s) { w.forEach(function (x) { s.kv.put(x.v, x.k); }); }).then(function () {
+  DL.run(['kv'], 'readwrite', function (s) {
+    w.forEach(function (x) { if (x.v === undefined) s.kv.delete(x.k); else s.kv.put(x.v, x.k); });
+  }).then(function () {
     w.forEach(function (x) {
       if (state.closeWrite[x.k] === x.f) { state.known[x.k] = x.f; delete state.closeWrite[x.k]; state.storedEdits[x.k] = x.ed; }
     });
@@ -367,7 +403,7 @@ function sameAsKnown(k, v) {
 // them it reads them all again in the same storage step and compares each with
 // what it last read or wrote (state.known); one that another open copy of the
 // page changed is never written over: the stored one is taken instead (Q40).
-var GUARDED = ['draft', 'draft-Morning', 'draft-Evening', 'running', 'lastSaved'];
+var GUARDED = ['draft', 'draft-Morning', 'draft-Evening', 'running', 'lastSaved', KEY_FIX];   // 019 adds the change in progress
 // What is compared: the value written out with its parts in a fixed order. A half-filled
 // screen is compared as the page would show it, so a screen never stored, an empty one
 // and one kept by an older page without the newer parts count the same when they hold
@@ -384,7 +420,12 @@ function fp(k, v) {
   if (k === 'draft') return stable(v && v.scores ? fillDraft(clone(v)) : emptyDraft());
   if (k === 'draft-Morning') return stable(fillOther(v === undefined ? undefined : clone(v), emptyMorning()));
   if (k === 'draft-Evening') return stable(fillOther(v === undefined ? undefined : clone(v), emptyEvening()));
+  if (k === KEY_FIX) return v === undefined || v === null ? '-' : stable(normFix(clone(v)));
   return stable(v);
+}
+// A change in progress as the page uses it: its screen with every part (019).
+function normFix(v) {
+  return { id: v.id, base: v.base, test: !!v.test, orig: v.orig, dr: fillDraft(v.dr), opened: v.opened === undefined ? null : v.opened };
 }
 
 // The page's own storage steps start at once, as on 015-3 (016-2; Agent P, W1): the
@@ -403,7 +444,7 @@ function queued(fn) {
 // written. A read that fails here does not stop the step: that item is listed in
 // missed and cannot be compared, so it is not written (016-2), and a Save or Undo
 // that needs it writes nothing (a failure seen only in tests so far).
-function guarded(stores, decide, mode) {
+function guarded(stores, decide, mode, extras) {
   // A step that writes entries makes today's list read them again (018): before it starts and once it is over.
   var touchesEntries = (mode || 'readwrite') === 'readwrite' && stores.indexOf('entries') >= 0;
   if (touchesEntries) listGen++;
@@ -414,11 +455,13 @@ function guarded(stores, decide, mode) {
       var s = {};
       stores.forEach(function (n) { s[n] = t.objectStore(n); });
       var keys = GUARDED.filter(function (k) { return !state.unread[k]; });
-      var got = {}, missed = {}, left = keys.length, res = null, failed = null, started = false;
+      // Further reads in the same step (019: every version of the entry being changed).
+      var ex = extras || [], extra = {};
+      var got = {}, missed = {}, left = keys.length + ex.length, res = null, failed = null, started = false;
       var go = function () {
         if (started) return;
         started = true;
-        try { res = decide(s, got, missed) || {}; res.got = got; res.missed = missed; if (!res.wrote) res.wrote = {}; }
+        try { res = decide(s, got, missed, extra) || {}; res.got = got; res.missed = missed; if (!res.wrote) res.wrote = {}; }
         catch (err) { failed = err; try { t.abort(); } catch (e) { /* already done */ } }
       };
       var one = function () { if (--left === 0) go(); };
@@ -428,6 +471,13 @@ function guarded(stores, decide, mode) {
           q.onsuccess = function () { try { got[k] = q.result; } catch (e) { missed[k] = true; } one(); };
           q.onerror = function (e) { missed[k] = true; try { e.preventDefault(); e.stopPropagation(); } catch (x) { /* ignore */ } one(); };
         } catch (e) { missed[k] = true; left--; }
+      });
+      ex.forEach(function (x) {
+        try {
+          var q = x.key !== undefined ? s[x.store].get(x.key) : s[x.store].getAll(x.range);
+          q.onsuccess = function () { extra[x.name] = q.result; one(); };
+          q.onerror = function (e) { extra.failed = true; try { e.preventDefault(); e.stopPropagation(); } catch (y) { /* ignore */ } one(); };
+        } catch (e) { extra.failed = true; left--; }
       });
       if (left === 0) go();
       // A step whose reads never all answered is treated as not readable (Agent P, note 8).
@@ -525,6 +575,7 @@ function take(k, v) {
     state.gen[k] = (state.gen[k] || 0) + 1;
     if (k === 'running') state.running = null;
     else if (k === 'lastSaved') state.lastSaved = null;
+    else if (k === KEY_FIX) state.fix = null;
     else setDraftOf(k === 'draft' ? 'Intraday' : k.slice(6), emptyOf(k === 'draft' ? 'Intraday' : k.slice(6)));
     return false;
   }
@@ -536,6 +587,7 @@ function take(k, v) {
   else if (k === 'draft') { state.draft = v ? fillDraft(v) : emptyDraft(); settleUsualPicks(state.draft); }
   else if (k === 'draft-Morning') state.mdraft = fillOther(v, emptyMorning());
   else if (k === 'draft-Evening') state.edraft = fillOther(v, emptyEvening());
+  else if (k === KEY_FIX) { state.fix = v ? normFix(v) : null; state.fixConfirm = null; }
   return true;
 }
 
@@ -564,7 +616,7 @@ function runningOk(r) {
 function kindOk(k, v) {
   if (k === 'running') return runningOk(v);
   if (k === 'lastSaved') {
-    return isObj(v) && isDay(v.date) && isHM(v.time) && typeof v.summary === 'string' && noneOr(v.until, isNum) &&
+    return isObj(v) && isDay(v.date) && isHM(v.time) && typeof v.summary === 'string' && noneOr(v.until, isNum) && noneOr(v.fixUntil, isNum) &&
            noneOr(v.savedDate, isDay) && noneOr(v.savedTime, isHM) && optStr(v.id) && optBool(v.undone) &&
            noneOr(v.ended, function (e) { return isObj(e) && isNum(e.version) && runningOk(e.before); });
   }
@@ -580,6 +632,10 @@ function kindOk(k, v) {
   if (k === 'draft-Evening') {
     return isObj(v) && timesOk(v.times, EVENING_TIMES) && scoresOk(v.scores, EVENING_SCORES.map(function (s) { return s.key; })) &&
            fixedOk(v.fixed) && optBool(v.notable) && optStr(v.why) && endAnsOk(v.endAns);
+  }
+  if (k === KEY_FIX) {
+    return v === null || (isObj(v) && typeof v.id === 'string' && isNum(v.base) && v.base >= 1 && isObj(v.orig) &&
+                          kindOk('draft', v.dr) && isObj(v.dr.fixed) && optBool(v.test));
   }
   return true;
 }
@@ -623,6 +679,7 @@ function isStale() {
 // once the day it began on is over (R80).
 function endBoxOn(screen) {
   if (!state.running) return false;
+  if (screen === 'Intraday' && state.fix) return false;      // not while an entry is being changed (019)
   return screen === 'Evening' || (screen === 'Intraday' && isStale());
 }
 function endAnswered(dr) {
@@ -739,6 +796,10 @@ function nextSeq() { seqCounter = (seqCounter + 1) % 1000; return Date.now() * 1
 
 // The green bar and its Undo last until the next Save, and at most until the
 // day he saved in has ended (05:00), so Undo is only for a Save just made (S3, R76).
+// When a green bar goes. The "Changes saved" bar (019-2) keeps its own in fixUntil; its until is
+// already past, so an earlier page put back by the way back shows no bar and no Undo (Agent W, F1).
+function barUntil(b) { return b ? (b.fix ? b.fixUntil : b.until) : 0; }
+function barGone(b) { var u = barUntil(b); return !!u && Date.now() >= u; }
 function nextDayStart(d) {
   var t = new Date(d.getFullYear(), d.getMonth(), d.getDate(), DAY_STARTS_AT, 0, 0, 0);
   if (t.getTime() <= d.getTime()) t = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, DAY_STARTS_AT, 0, 0, 0);
@@ -802,6 +863,7 @@ var lastSaveTap = 0;
 function save() {
   var screen = state.screen;
   if (state.reading) return;                        // the opening read is not finished (013; a few milliseconds)
+  if (screen === 'Intraday' && state.fix) { saveFix(); return; }      // 019
   if (padShowing('tpad') && el('tpadinput').value.trim() !== '') {
     el('tpadmsg').textContent = 'Tap AM or PM to set this time first, or Cancel.';
     el('tpadmsg').className = 'padmsg bad';
@@ -848,6 +910,12 @@ function save() {
     }
   } else if (screen === 'Intraday' && dr.endTick && run) {
     endHow = { atTop: true };
+  }
+  // A walk being changed on Intraday is not ended meanwhile (019-2; Agent W, W2).
+  if (endHow && state.fix && run && state.fix.id === run.id) {
+    showError('You are changing this ' + (run.kind === 'Walk' ? 'walk' : 'workout') + ' on Intraday. Tap Save changes or Cancel there first, then end it here.');
+    specificShown = el('error').textContent;
+    return;
   }
   var other = contentOf(screen, dr);
   if (!endHow && !other) {
@@ -987,8 +1055,9 @@ function save() {
 // CARD, C9); a workout started by the Save is undone with its entry.
 function undo() {
   var bar = state.lastSaved;
-  if (bar && bar.until && Date.now() >= bar.until) { render(); return; }
-  if (!bar || bar.undone || state.saving) return;
+  if (bar && barGone(bar)) { render(); return; }
+  if (!bar || bar.undone || bar.fix || state.saving) return;      // no Undo after Save changes (R90)
+  if (state.fix && state.screen === 'Intraday') return;            // not while an entry is being changed (G019-1)
   if (state.unread.running && (bar.started || bar.ended)) {      // never written over (015)
     showError('This phone could not read whether a walk or workout is running, so this Save can’t be undone just now. ' +
               'Close the page and open it again, then tap Undo.');
@@ -1077,6 +1146,331 @@ function undo() {
   }, function () {
     state.saving = false;
     showError('Could not undo: this phone’s storage refused. Try Undo again.');
+  });
+}
+
+// ------------------------------------------------------------------ changing a saved entry (019)
+// Tapping an Intraday entry in today's list opens its newest version on the Intraday
+// screen (R88). "Save changes" writes the next version of it (D20, R76), keeping its
+// time unless Edit changed it, with the time of the change in "Saved at" (R60, R16).
+// Workout cannot be added or taken off here (G019-4); the kind of a walk or workout
+// can change, and a walk still running takes the change with it, so its End ends the
+// changed version. No Undo after Save changes (R90).
+
+// Every key fieldsFor() can write; any other part of the entry is kept as it was
+// (for example "Workout ended").
+var MADE_BY_SCREEN = ['Log day', 'Time', 'Screen', 'Mind', 'Body', 'Balance', 'Comments', 'Notable', 'Notable why', 'Personal',
+                      'Shake', 'Shake contents', 'Medicine', 'Medicine contents', 'Workout', 'Coffee', 'Water', 'Other liquid',
+                      'Other liquid, what', 'Food or snack', 'Food or snack, what', 'Other', 'Calendar date', 'UTC offset', 'Saved at'];
+function versionsRange(id) { return IDBKeyRange.bound(id + ':', id + ':￿'); }
+function newestOf(list) {
+  var top = null;
+  (list || []).forEach(function (v) { if (v && typeof v.version === 'number' && (!top || v.version > top.version)) top = v; });
+  return top;
+}
+// The Intraday screen filled in from a saved entry's fields.
+function fixDraftFrom(f) {
+  var d = emptyDraft();
+  var date = calDateOf(f);
+  var time = f['Time'];
+  d.fixed = { date: date, time: time, at: momentOf(date, time).getTime() };
+  d.edited = true;                                   // its time is never dropped (settleOf)
+  SCORE_ROWS.forEach(function (k) {
+    var n = typeof f[k] === 'string' && /^[+-]?\d$/.test(f[k].trim()) ? Number(f[k]) : f[k];     // a score kept as text (Agent W, N3)
+    if (SCORE_VALUES.indexOf(n) >= 0) d.scores[k] = n;
+  });
+  if (typeof f['Comments'] === 'string') d.comments = f['Comments'];
+  d.notable = f['Notable'] === 'Yes';
+  if (typeof f['Notable why'] === 'string') d.why = f['Notable why'];
+  d.personal = f['Personal'] === 'Yes';
+  USUAL_KINDS.forEach(function (kind) {
+    if (typeof f[kind] !== 'string') return;
+    d[kind] = { pick: f[kind], what: f[kind] === SOMETHING_ELSE && typeof f[kind + ' contents'] === 'string' ? f[kind + ' contents'] : '' };
+  });
+  if (typeof f['Workout'] === 'string') d.workout = { kind: f['Workout'] };
+  var lq = { coffee: f['Coffee'] === 'Yes', water: f['Water'] === 'Yes', other: f['Other liquid'] === 'Yes',
+             what: typeof f['Other liquid, what'] === 'string' ? f['Other liquid, what'] : '' };
+  if (lq.coffee || lq.water || lq.other) d.liquids = lq; else d.liqWhat = lq.what;
+  d.food = { on: f['Food or snack'] === 'Yes', text: typeof f['Food or snack, what'] === 'string' ? f['Food or snack, what'] : '' };
+  d.other = { on: f['Other'] !== undefined, text: typeof f['Other'] === 'string' ? f['Other'] : '' };
+  return d;
+}
+// The calendar date of an entry: its own, or worked out from its Log day and Time (before 5:00 AM
+// the calendar date is the day after the Log day, R75) for an entry without one (Agent W, N3).
+function dayAfter(s) { var p = parts(s); return dateStr(new Date(p.y, p.m - 1, p.d + 1, 12)); }
+function calDateOf(f) {
+  if (isDay(f['Calendar date'])) return f['Calendar date'];
+  return isHM(f['Time']) && Number(f['Time'].slice(0, 2)) < DAY_STARTS_AT ? dayAfter(f['Log day']) : f['Log day'];
+}
+// The usual one recorded in the entry, when it is not among the usual ones in use now:
+// offered as a choice, so keeping it keeps what was recorded (G40).
+function fixExtra(kind) {
+  var fx = state.fix;
+  if (!fx) return null;
+  var name = fx.orig[kind];
+  if (typeof name !== 'string' || name === SOMETHING_ELSE) return null;
+  if (USUALS[kind].some(function (u) { return u.name === name; })) return null;
+  return { name: name, contents: typeof fx.orig[kind + ' contents'] === 'string' ? fx.orig[kind + ' contents'] : '' };
+}
+// The fields of the changed version.
+function fixFields(fx, now) {
+  var f = fieldsFor(fx.dr, now), o = fx.orig;
+  // A shake or medicine kept as recorded keeps what was recorded with it (G40).
+  USUAL_KINDS.forEach(function (kind) {
+    if (fx.dr[kind] && typeof o[kind] === 'string' && o[kind] !== SOMETHING_ELSE && fx.dr[kind].pick === o[kind]) {
+      f[kind] = o[kind];
+      if (o[kind + ' contents'] !== undefined) f[kind + ' contents'] = o[kind + ' contents']; else delete f[kind + ' contents'];
+    }
+  });
+  // The time not changed: the date and offset stay exactly as recorded.
+  var od = calDateOf(o);
+  if (fx.dr.fixed.date === od && fx.dr.fixed.time === o['Time'] && o['UTC offset'] !== undefined) f['UTC offset'] = o['UTC offset'];
+  Object.keys(o).forEach(function (k) { if (MADE_BY_SCREEN.indexOf(k) < 0 && f[k] === undefined) f[k] = o[k]; });
+  return f;
+}
+// The green bar's line after Save changes: what the entry holds, a walk or workout with its times (Agent W, W5).
+function fixSummary(f, running) {
+  var g = clone(f);
+  var w = '';
+  if (g['Workout'] !== undefined) {
+    var end = g['Workout ended'];
+    w = g['Workout'] + (end === undefined ? (running ? ' from ' + ampm(g['Time']) + ', still running' : '')
+                        : end === END_NOT_KNOWN ? ' from ' + ampm(g['Time']) + ', end not known'
+                        : ' ' + ampm(g['Time']) + ' to ' + (isHM(end) ? ampm(end) : end));
+    delete g['Workout']; delete g['Workout ended'];
+  }
+  var rest = summary(g);
+  return w && rest ? w + ', ' + rest : (w || rest);
+}
+function sameFields(a, b) {
+  var x = clone(a), y = clone(b);
+  delete x['Saved at']; delete y['Saved at'];
+  if (y['Screen'] === undefined) y['Screen'] = 'Intraday';          // an entry with no Screen is an Intraday one (Agent W, N3)
+  return stable(x) === stable(y);
+}
+// The end of an ended walk or workout as a moment: the first time with its clock time
+// at or after it started (as endMoment).
+function endAtOf(o) {
+  var e = o['Workout ended'];
+  if (!isHM(e)) return null;
+  var t = momentOf(calDateOf(o), o['Time']);
+  for (var k = 0; k <= 26 * 60; k++) {
+    if (timeStr(t) === e) return t.getTime();
+    t = new Date(t.getTime() + 60000);
+  }
+  return null;
+}
+
+var CANT_CHANGE_NOW = 'This phone could not read part of what it keeps, so entries can’t be changed just now. ' +
+                      'Close the page and open it again; if this keeps happening, tell Claude.';
+var FIX_CHANGED = 'Not saved: this entry was changed since you opened it here (it was undone, or its walk or workout was ended or changed, ' +
+                  'perhaps in the day log open somewhere else). Your changes are still on the screen. Tap Cancel to see the entry as it is now, then change it again.';
+var NOT_READ_FIX = 'Not saved: this phone could not read its own storage just now, so nothing was saved, and your changes are back on the screen. ' +
+                   'Tap Save changes again; if this keeps happening, close the page and open it again, and tell Claude.';
+
+// Taps in the screen for a moment after it jumps (an entry opened, Save changes, Cancel) are
+// ignored, so a quick second tap does not land on whatever moved under the finger (Agent W, W1).
+var TAP_SHIELD_MS = 400, tapShield = 0;
+function shieldTaps(ms) { tapShield = Math.max(tapShield, Date.now() + ms); }
+
+var opening = false;
+function openFix(id) {
+  if (state.reading || !state.loaded || state.noStorage || state.fix || opening || state.screen !== 'Intraday') return;
+  if (state.unread[KEY_FIX]) { showError(CANT_CHANGE_NOW); return; }
+  opening = true;
+  DL.run(['entries'], 'readonly', function (s, r) {
+    var q = s.entries.getAll(versionsRange(id));
+    q.onsuccess = function () { r.list = q.result; };
+  }).then(function (r) {
+    opening = false;
+    var top = newestOf(r.list);
+    if (!top || top.state === 'undone' || state.fix || state.screen !== 'Intraday' || !!top.test !== !!state.test) return;
+    var f = top.fields || {};
+    if ((f['Screen'] || 'Intraday') !== 'Intraday') {
+      showNote('Morning and Evening entries can be changed after the next update.');
+      return;
+    }
+    if (!isHM(f['Time']) || !(isDay(f['Calendar date']) || isDay(f['Log day']))) {
+      showError('This entry’s time could not be read, so it can’t be changed on the phone. Tell Claude.');
+      return;
+    }
+    if (f['Workout'] !== undefined && state.unread.running) {
+      showError('This phone could not read whether a walk or workout is running, so this one can’t be changed just now. ' +
+                'Close the page and open it again.');
+      return;
+    }
+    if (draftTimer) storeDraft(true);                 // the half-filled new entry is kept as it is
+    state.interacted = true;                          // a new page version waits until he leaves (Agent W, N5)
+    state.fix = { id: id, base: top.version, test: !!top.test, orig: clone(f), dr: fixDraftFrom(f), opened: DL.stampNow() };
+    state.fixConfirm = null;
+    state.edits[KEY_FIX] = (state.edits[KEY_FIX] || 0) + 1;
+    closePad();
+    closeTpad();
+    el('nothing').hidden = true;
+    storeDraft(true);
+    render();
+    window.scrollTo(0, 0);
+    shieldTaps(TAP_SHIELD_MS);                        // the screen moved under his finger (Agent W, W1)
+  }, function () {
+    opening = false;
+    showError('This entry could not be read from the phone’s storage just now. Try again; if this keeps happening, tell Claude.');
+  });
+}
+
+// Leaves the change without saving it; also used when nothing was changed.
+function cancelFix(note) {
+  if (!state.fix) return;
+  closePad();
+  closeTpad();
+  state.fix = null;
+  state.fixConfirm = null;
+  state.edits[KEY_FIX] = (state.edits[KEY_FIX] || 0) + 1;
+  storeDraft(true);
+  el('nothing').hidden = true;
+  render();
+  window.scrollTo(0, 0);
+  shieldTaps(TAP_SHIELD_MS);
+  if (note) showNote(note);
+}
+
+function saveFix() {
+  var fx = state.fix;
+  if (state.reading || !fx) return;
+  if (padShowing('pad') && el('padinput').value.trim() !== '') {
+    el('padmsg').textContent = 'Tap AM or PM to change the time first, or Cancel.';
+    el('padmsg').className = 'padmsg bad';
+    try { el('pad').scrollIntoView({ block: 'center' }); } catch (x) { /* ignore */ }
+    return;
+  }
+  var dr = fx.dr;
+  if (dr.liquids && !liquidsPicked(dr)) {
+    showNote('Pick Coffee, Water or Something else, or tap Liquids again to take it off.');
+    return;
+  }
+  var walk = fx.orig['Workout'] !== undefined;
+  if (walk && state.unread.running) {
+    showError('This phone could not read whether a walk or workout is running, so this one can’t be changed just now. ' +
+              'Close the page and open it again.');
+    return;
+  }
+  if (!hasContent(dr, true)) {
+    showError('An entry can’t be left with nothing in it. Put something back, or tap Cancel to leave it as it was.');
+    return;
+  }
+  var now = new Date();
+  var fields = fixFields(fx, now);
+  if (sameFields(fields, fx.orig)) { cancelFix('Nothing was changed, so nothing was saved.'); return; }
+  var startAt = dr.fixed.at || momentOf(dr.fixed.date, dr.fixed.time).getTime();
+  var endAt = walk ? endAtOf(fx.orig) : null;
+  if (endAt !== null && startAt > endAt) {
+    showError('The ' + (fx.orig['Workout'] === 'Walk' ? 'walk' : 'workout') + ' ended at ' + ampm(fx.orig['Workout ended']) +
+              ', so its start can’t be later than that. Change the time with Edit, or tap Cancel.');
+    return;
+  }
+  // Moved to another day: asked once more, since there is no Undo and earlier days can't be opened yet (G019-5).
+  if (fields['Log day'] !== fx.orig['Log day']) {
+    var ck = fx.id + '|' + fields['Log day'] + '|' + fields['Time'];
+    if (state.fixConfirm !== ck) {
+      state.fixConfirm = ck;
+      showError('This time puts the entry on ' + weekday(fields['Log day']) + ' ' + usDate(fields['Log day']) +
+                ', so it will leave today’s list, and earlier days can’t be opened on the phone yet. ' +
+                'Tap Save changes again to keep it, or change the time with Edit.');
+      specificShown = el('error').textContent;
+      return;
+    }
+  }
+  state.fixConfirm = null;
+  var run = state.running;
+  var isRun = !!(run && run.id === fx.id);
+  var newRunning = run;
+  if (isRun) {
+    newRunning = clone(run);
+    newRunning.version = fx.base + 1;
+    newRunning.fields = fields;
+    newRunning.kind = fields['Workout'];
+    newRunning.startAt = startAt;
+    newRunning.startDate = dr.fixed.date;
+    newRunning.startTime = dr.fixed.time;
+  }
+  var ver = fx.base + 1;
+  var entry = { key: fx.id + ':' + ver, id: fx.id, version: ver, state: 'current', test: fx.test, fields: fields, seq: nextSeq(),
+                changed: { date: dateStr(now), time: timeStr(now) } };
+  var pl = payloadFor(entry);
+  pl.app.change = 'fix';
+  var out = { key: entry.key, seq: entry.seq, status: 'waiting', payload: pl };
+  // The green bar says the changes were saved, with no Undo (R90, G019-7). Its id is null and its
+  // until already past, so an earlier page put back by the way back neither shows it nor undoes anything (019-2).
+  var bar = { id: null, fixId: fx.id, fix: true, date: dr.fixed.date, time: dr.fixed.time, summary: fixSummary(fields, isRun), undone: false,
+              test: fx.test, screen: 'Intraday', savedDate: dateStr(now), savedTime: timeStr(now),
+              until: now.getTime(), fixUntil: nextDayStart(now).getTime(), started: false, ended: null };
+  if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
+  var gen0 = { running: state.gen.running, fix: state.gen[KEY_FIX] };
+  var ed0 = state.edits[KEY_FIX] || 0;
+  var saved = fx, runBefore = run;
+  state.fix = null;                                  // the screen goes back at once, as after Save
+  state.running = newRunning;
+  closePad();
+  closeTpad();
+  render();
+  shieldTaps(TAP_SHIELD_MS);
+  queued(function () {
+    return guarded(['entries', 'outbox', 'kv'], function (s, got, missed, extra) {
+      if (notReadable(walk ? [KEY_FIX, 'running'] : [KEY_FIX], missed) || extra.failed) return { refused: true, unreadable: true };
+      if (state.gen[KEY_FIX] !== gen0.fix || !unchanged(KEY_FIX, got, missed)) return { refused: true, why: 'save-screen' };
+      if (isRun && (state.gen.running !== gen0.running || !unchanged('running', got, missed))) return { refused: true, why: 'save-walk' };
+      // Still the newest version, and not undone: no version after it, and it is there (019-2: two reads, Agent W, W4).
+      if (extra.next !== undefined || !extra.base || extra.base.state === 'undone') return { refused: true, why: 'fix-changed' };
+      if (isRun && (!got.running || got.running.id !== fx.id || got.running.version !== fx.base)) return { refused: true, why: 'fix-changed' };
+      var wrote = {};
+      s.entries.put(entry);
+      s.outbox.put(out);
+      if (isRun) { s.kv.put(newRunning, 'running'); wrote.running = newRunning; }
+      s.kv.put(bar, 'lastSaved');
+      wrote.lastSaved = bar;
+      s.kv.delete(KEY_FIX);
+      wrote[KEY_FIX] = undefined;
+      return { wrote: wrote };
+    }, 'readwrite', [{ name: 'base', store: 'entries', key: fx.id + ':' + fx.base }, { name: 'next', store: 'entries', key: fx.id + ':' + (fx.base + 1) }]);
+  }).then(function (res) {
+    if (res.refused) {
+      if (state.gen.running === gen0.running) state.running = runBefore;
+      if (state.gen[KEY_FIX] === gen0.fix && !state.fix) state.fix = saved;
+      if (res.unreadable) { render(); showError(NOT_READ_FIX); specificShown = el('error').textContent; return; }
+      if (res.why === 'fix-changed') {
+        afterGuarded(res, 'none');
+        render();
+        showError(FIX_CHANGED);
+        specificShown = el('error').textContent;
+        return;
+      }
+      ['running', KEY_FIX].forEach(function (k) {
+        if (!state.unread[k] && !res.missed[k] && !sameAsKnown(k, res.got[k])) take(k, res.got[k]);
+      });
+      afterGuarded(res, res.why);
+      storeDraft(true);
+      return;
+    }
+    state.lastSaved = bar;
+    state.flash = { id: fx.id, until: Date.now() + 4000 };     // shaded green in today's list (G24)
+    setTimeout(refreshList, 4100);
+    state.storedEdits[KEY_FIX] = ed0;
+    delete state.unread.lastSaved;
+    el('error').hidden = true;
+    showUnread(false);
+    el('nothing').hidden = true;
+    var taken = afterGuarded(res, 'none');
+    tidyEnds();
+    storeDraft(true);
+    render();
+    kick();
+    window.scrollTo(0, 0);
+    if (taken.length) showOtherLine('other');
+  }, function () {
+    state.running = runBefore;
+    if (!state.fix) state.fix = saved;
+    storeDraft(true);
+    render();
+    showError('Could not save the changes on this phone: its storage refused. They are back on the screen; try Save changes again.');
   });
 }
 
@@ -1252,6 +1646,7 @@ function askBackgroundSend() {
 // with a year of entries stored, reading them all takes a moment (018, perf check).
 var listBusy = false, listAgain = false;
 var listGen = 1, listReadGen = 0, listNewest = null, listRows = null, listRowsKey = '', listDrawn = '';
+var listChanged = {};             // for each entry, when it was last changed with Save changes (019, R89)
 var newestReading = null, newestReadingGen = 0;
 // The newest version of every entry, by id: read once for each change (listGen) and shared
 // by today's list and the check marks on Morning and Evening (refreshDone), so a Save
@@ -1262,11 +1657,14 @@ function newestEntries() {
   if (newestReading && newestReadingGen === gen) return newestReading;
   newestReadingGen = gen;
   var p = DL.getAll('entries').then(function (all) {
-    var newest = {};
+    var newest = {}, changed = {};
     all.forEach(function (v) {
       if (v && typeof v.id === 'string' && typeof v.version === 'number' && (!newest[v.id] || v.version > newest[v.id].version)) newest[v.id] = v;
+      if (v && typeof v.id === 'string' && typeof v.version === 'number' && v.changed && isDay(v.changed.date) && isHM(v.changed.time) &&
+          (!changed[v.id] || v.version > changed[v.id].version)) changed[v.id] = { version: v.version, date: v.changed.date, time: v.changed.time };
     });
     listNewest = newest;
+    listChanged = changed;
     listReadGen = gen;
     listRows = null;
     return newest;
@@ -1290,11 +1688,11 @@ function refreshList() {
   };
   return Promise.all([newestEntries(), DL.getAll('outbox')]).then(function (a) {
     var newest = a[0];
-    var waiting = {}, refused = {};
+    var waiting = {}, refused = refusedNow(a[1], newest);
     a[1].forEach(function (x) {
       var pl = x && x.payload;
       if (!pl || pl.kind !== 'log') return;
-      if (x.status === 'refused') refused[pl.id] = true; else waiting[pl.id] = true;
+      if (x.status !== 'refused') waiting[pl.id] = true;
     });
     var key = listReadGen + '|' + today + '|' + !!state.test;
     if (!listRows || listRowsKey !== key) {
@@ -1315,14 +1713,28 @@ function refreshList() {
     // The entry just saved, when its day is not today (a time changed to before 5:00 AM or to
     // the evening before): a line says where it went (018-2; Agent V, W4).
     var bar = state.lastSaved, away = '';
-    if (bar && !bar.undone && bar.id && !(bar.until && Date.now() >= bar.until) && newest[bar.id] &&
-        newest[bar.id].state !== 'undone' && !!newest[bar.id].test === !!state.test) {
-      var bd = (newest[bar.id].fields || {})['Log day'];
+    var bid = bar ? (bar.id || bar.fixId) : null;      // a change saved (019) has its entry in fixId
+    if (bar && !bar.undone && bid && !barGone(bar) && newest[bid] &&
+        newest[bid].state !== 'undone' && !!newest[bid].test === !!state.test) {
+      var bd = (newest[bid].fields || {})['Log day'];
       if (typeof bd === 'string' && bd !== today) away = bd;
     }
-    sig += '|' + away;
-    if (sig !== listDrawn || !el('today').firstChild) { drawList(listRows, waiting, refused, away); listDrawn = sig; }
+    var awayFix = !!(away && bar.fix);
+    sig += '|' + away + '|' + awayFix;
+    if (sig !== listDrawn || !el('today').firstChild) { drawList(listRows, waiting, refused, away, awayFix); listDrawn = sig; }
   }).then(done, failed);
+}
+// Entries the sheet turned away and not since replaced by a newer version of them: a refused
+// version older than the newest one no longer counts (019-2; Agent W, W3).
+function refusedNow(outbox, newest) {
+  var refused = {};
+  outbox.forEach(function (x) {
+    var pl = x && x.payload;
+    if (!pl || pl.kind !== 'log' || x.status !== 'refused') return;
+    var top = newest[pl.id];
+    if (!top || typeof pl.version !== 'number' || pl.version >= top.version) refused[pl.id] = true;
+  });
+  return refused;
 }
 function listKey(v) {
   var f = v.fields || {};
@@ -1387,10 +1799,12 @@ function listParts(f) {
   return { title: title.join('; '), details: details, words: words, marks: marks };
 }
 function listDiv(cls, text) { var d = document.createElement('div'); d.className = cls; d.textContent = text; return d; }
-function drawList(rows, waiting, refused, away) {
+function drawList(rows, waiting, refused, away, awayFix) {
   var box = el('today');
   box.textContent = '';
-  if (away) box.appendChild(listDiv('away', 'The entry you just saved belongs to ' + weekday(away) + ' ' + usDate(away) + ', so it is not in today’s list. Each day in the list runs from 5:00 AM to 5:00 AM.'));
+  if (away) box.appendChild(listDiv('away', 'The entry you just ' + (awayFix ? 'changed' : 'saved') + ' belongs to ' + weekday(away) + ' ' + usDate(away) + ', so it is not in today’s list. Each day in the list runs from 5:00 AM to 5:00 AM.'));
+  var hint = document.querySelector('.listhint');
+  if (hint) hint.hidden = !rows.length;           // no hint over an empty list (Agent W, N8)
   if (!rows.length) { box.appendChild(listDiv('empty', 'Nothing saved yet today.')); return; }
   var flash = state.flash && Date.now() < state.flash.until ? state.flash.id : null;
   rows.forEach(function (v) {
@@ -1405,6 +1819,8 @@ function drawList(rows, waiting, refused, away) {
     parts.details.forEach(function (t) { body.appendChild(listDiv('ed', t)); });
     parts.words.forEach(function (w) { body.appendChild(listDiv('ew', w[0] + '“' + String(w[1]) + '”')); });
     if (parts.marks.length) body.appendChild(listDiv('em', parts.marks.join(' · ')));
+    var ch = listChanged[v.id];
+    if (ch) body.appendChild(listDiv('en chg', 'changed ' + whenOf(ch.date, ch.time, dateStr(new Date()))));     // R89
     if (refused[v.id]) body.appendChild(listDiv('en bad', 'The sheet did not accept this'));
     else if (waiting[v.id]) body.appendChild(listDiv('en wait', 'waiting to send'));
     row.appendChild(body);
@@ -1415,6 +1831,14 @@ function drawList(rows, waiting, refused, away) {
 function refreshStatus() {
   refreshList();                    // today's list follows every change the lines at the top follow (018)
   return Promise.all([DL.counts(), DL.get('kv', 'link'), DL.get('kv', 'codeProblem')]).then(function (a) {
+    var c = a[0];
+    if (!c.refused) return a;
+    // Turned-away entries since replaced by a newer version that went are not counted (019-2; Agent W, W3).
+    return Promise.all([DL.getAll('outbox'), newestEntries()]).then(function (b) {
+      c.refused = Object.keys(refusedNow(b[0], b[1])).length;
+      return a;
+    }, function () { return a; });
+  }).then(function (a) {
     var c = a[0], link = a[1], codeProblem = a[2];
     var lines = [];
     if (!link) lines.push(['warn', 'Not linked to your sheet yet. Scan the code on your PC.']);
@@ -1596,11 +2020,23 @@ function render() {
   el('testbar').hidden = !state.test;
   renderHeads();
   SCREENS.forEach(function (s) { el('sc-' + s).hidden = s !== screen; });
-  el('else').hidden = screen !== 'Intraday';      // today's list: Intraday only (018, G018-1)
+  var fixing = !!state.fix && screen === 'Intraday';
+  el('else').hidden = screen !== 'Intraday' || fixing;     // today's list: Intraday only (018, G018-1); hidden while changing an entry (G019-1)
+  el('fixbanner').hidden = !fixing;
+  if (fixing) {
+    var fo = state.fix.orig;
+    var fd = calDateOf(fo);
+    el('fixtitle').textContent = 'Changing your entry of ' + (isHM(fo['Time']) ? whenOf(fd, fo['Time'], dateStr(new Date())) : '');
+  }
+  el('save').textContent = fixing ? 'Save changes' : 'Save';
+  el('cancelfix').hidden = !fixing;
+  var usig = JSON.stringify([fixExtra('Shake'), fixExtra('Medicine')]);
+  if (usig !== usualSig) buildUsualChoices();
 
   // Green bar after Save (G10, D48)
   var bar = state.lastSaved;
-  if (bar && bar.until && Date.now() >= bar.until) bar = null;
+  if (bar && barGone(bar)) bar = null;
+  if (fixing) bar = null;                          // hidden while an entry is being changed (019-3, G019-1)
   var sb = el('savedbar');
   if (bar) {
     sb.hidden = false;
@@ -1608,6 +2044,8 @@ function render() {
     var title;
     if (bar.undone) {
       title = 'Undone: entry of ' + entryWhen;
+    } else if (bar.fix) {
+      title = 'Changes saved at ' + ampm(bar.savedTime || bar.time) + ' · entry time ' + entryWhen;
     } else {
       title = 'Saved at ' + ampm(bar.savedTime || bar.time);
       if (bar.savedTime && (bar.time !== bar.savedTime || bar.date !== bar.savedDate)) title += ' · entry time ' + entryWhen;
@@ -1621,7 +2059,7 @@ function render() {
       undoneText = 'Not started. It will show in your sheet as undone.';
     }
     el('savedwhat').textContent = bar.undone ? undoneText : bar.summary;
-    el('undo').hidden = !!bar.undone;
+    el('undo').hidden = !!bar.undone || !!bar.fix || fixing;      // no Undo after Save changes (R90), nor while changing (G019-1)
     sb.classList.toggle('undone', !!bar.undone);
   } else {
     sb.hidden = true;
@@ -1652,7 +2090,7 @@ function renderScores() {
 }
 
 function renderIntraday() {
-  var dr = state.draft;
+  var dr = idr();
   // Comments, Notable, Personal
   var c = el('comments');
   if (c.value !== dr.comments) c.value = dr.comments;
@@ -1684,19 +2122,34 @@ function renderIntraday() {
   // Workout (increment 005); a workout from a day that is over is ended in the box above (R80)
   var stale = isStale();
   var tw = el('t-Workout');
-  el('lbl-Workout').textContent = state.running ? endLabel() : 'Workout';
-  var won = state.running ? (dr.endTick || (stale && endAnswered(dr))) : !!dr.workout;
+  // While an entry is being changed (019) the tile shows that entry's walk or workout, if it has one.
+  var runShown = state.running && !state.fix ? state.running : null;
+  el('lbl-Workout').textContent = runShown ? endLabel() : 'Workout';
+  var won = runShown ? (dr.endTick || (stale && endAnswered(dr))) : !!dr.workout;
   tw.classList.toggle('on', won);
-  tw.classList.toggle('end', !!state.running);
+  tw.classList.toggle('end', !!runShown);
   tw.setAttribute('aria-pressed', won ? 'true' : 'false');
-  el('p-Workout').hidden = !(dr.workout && !state.running);
+  el('p-Workout').hidden = !(dr.workout && !runShown);
   Array.prototype.forEach.call(document.querySelectorAll('#p-Workout .choice'), function (c) {
     var on = !!dr.workout && dr.workout.kind === c.getAttribute('data-name');
     c.classList.toggle('on', on);
     c.setAttribute('aria-pressed', on ? 'true' : 'false');
   });
   var rl = el('running');
-  if (state.running && (!stale || dr.endTick)) {
+  if (state.fix) {
+    var o = state.fix.orig, w = o['Workout'] === 'Walk' ? 'walk' : 'workout';
+    rl.hidden = o['Workout'] === undefined;
+    if (o['Workout'] === undefined) rl.textContent = '';
+    else if (state.running && state.running.id === state.fix.id) {
+      rl.textContent = 'This ' + w + ' is still running. Its start is the time at the top. End it after you save or cancel.';
+    } else if (o['Workout ended'] === END_NOT_KNOWN) {
+      rl.textContent = 'This ' + w + ' ended at a time not known. Its start is the time at the top; changing its end comes with the next update.';
+    } else if (o['Workout ended'] !== undefined) {
+      rl.textContent = 'This ' + w + ' ended at ' + listTime(o['Workout ended']) + '. Its start is the time at the top; changing its end comes with the next update.';
+    } else {
+      rl.textContent = 'Its start is the time at the top.';
+    }
+  } else if (state.running && (!stale || dr.endTick)) {
     var r = state.running;
     rl.hidden = false;
     rl.textContent = dr.endTick
@@ -1778,6 +2231,7 @@ function renderEndBox() {
   if (a && a.unknown) note.textContent = 'It ends with no end time when you tap Save. Your sheet will say the end is not known.';
   else if (a && a.time) note.textContent = 'It ends at ' + whenOf(a.date || r.startDate, a.time, r.startDate) + ' when you tap Save.';
   else note.textContent = 'Set the time, or tap Don’t know. Skip it and you’ll be asked again.';
+  if (state.fix && state.fix.id === r.id) note.textContent = 'You are changing this ' + (r.kind === 'Walk' ? 'walk' : 'workout') + ' on Intraday. Tap Save changes or Cancel there first, then end it here.';
 }
 
 // The entry's time (G2, G21, G23, G26)
@@ -1799,10 +2253,13 @@ function renderWhen() {
 // The choices under Shake and Medicine: the usual ones in use, then Something
 // else, with a note when there are none. Built again once the stored usual ones
 // have been read (012, 013).
+var usualSig = '';
 function buildUsualChoices() {
+  usualSig = JSON.stringify([fixExtra('Shake'), fixExtra('Medicine')]);
   USUAL_KINDS.forEach(function (kind) {
     var box = el('c-' + kind);
     box.textContent = '';
+    var extra = fixExtra(kind);     // while changing an entry: the usual one it recorded, if no longer in use (019)
     var why = usualsNote(kind);
     if (why) {
       var n = document.createElement('div');
@@ -1812,6 +2269,7 @@ function buildUsualChoices() {
       box.appendChild(n);
     }
     USUALS[kind].map(function (u) { return { name: u.name, contents: u.contents }; })
+      .concat(extra ? [extra] : [])
       .concat([{ name: SOMETHING_ELSE, contents: '' }])
       .forEach(function (o) {
         var b = document.createElement('button');
@@ -1834,8 +2292,8 @@ function buildUsualChoices() {
         b.appendChild(k);
         b.addEventListener('click', function () {
           touch();
-          if (!state.draft[kind]) state.draft[kind] = { pick: o.name, what: '' };
-          state.draft[kind].pick = o.name;
+          if (!idr()[kind]) idr()[kind] = { pick: o.name, what: '' };
+          idr()[kind].pick = o.name;
           storeDraft(true);
           render();
           if (o.name === SOMETHING_ELSE) el('w-' + kind).focus();
@@ -1851,7 +2309,7 @@ function buildButtons() {
     el('t-' + kind).addEventListener('click', function () {
       touch();
       // The usual one is already picked (S8); tapping the button again takes it off.
-      state.draft[kind] = state.draft[kind] ? null : { pick: USUALS[kind].length ? USUALS[kind][0].name : SOMETHING_ELSE, what: '' };
+      idr()[kind] = idr()[kind] ? null : { pick: USUALS[kind].length ? USUALS[kind][0].name : SOMETHING_ELSE, what: '' };
       settle();
       storeDraft(true);
       render();
@@ -1859,7 +2317,7 @@ function buildButtons() {
     el('w-' + kind).setAttribute('maxlength', String(WHAT_MAX));
     el('w-' + kind).addEventListener('input', function () {
       touch();
-      if (state.draft[kind]) state.draft[kind].what = el('w-' + kind).value;
+      if (idr()[kind]) idr()[kind].what = el('w-' + kind).value;
       limitNote('w-' + kind, WHAT_MAX, 'That line');
       storeDraft(false);
     });
@@ -1872,9 +2330,10 @@ function buildButtons() {
     var t = document.createElement('span'); t.className = 'cn'; t.textContent = k; b.appendChild(t);
     var c = document.createElement('span'); c.className = 'chk'; c.textContent = '✓'; b.appendChild(c);
     b.addEventListener('click', function () {
+      if (state.fix && !idr().workout) return;
       touch();
-      if (!state.draft.workout) state.draft.workout = { kind: null };
-      state.draft.workout.kind = k;
+      if (!idr().workout) idr().workout = { kind: null };
+      idr().workout.kind = k;
       el('nothing').hidden = true;
       storeDraft(true);
       render();
@@ -1882,14 +2341,19 @@ function buildButtons() {
     el('c-Workout').appendChild(b);
   });
   el('t-Workout').addEventListener('click', function () {
-    if (state.running && isStale() && !state.draft.endTick) {        // ended in the box above (R80)
+    if (state.fix) {                // a walk or workout can't be added or taken off a saved entry (019, G019-4)
+      showNote(idr().workout ? 'A walk or workout can’t be taken off a saved entry. You can change its kind.'
+                             : 'A walk or workout can’t be added to a saved entry. Tap Cancel, then start it as a new entry.');
+      return;
+    }
+    if (state.running && isStale() && !idr().endTick) {        // ended in the box above (R80)
       try { el('endq').scrollIntoView({ block: 'center' }); } catch (e) { /* ignore */ }
       openTpad({ screen: 'Intraday', end: true }, el('endrow'));
       return;
     }
     touch();
-    if (state.running) state.draft.endTick = !state.draft.endTick;
-    else state.draft.workout = state.draft.workout ? null : { kind: null };
+    if (state.running) idr().endTick = !idr().endTick;
+    else idr().workout = idr().workout ? null : { kind: null };
     settle();
     storeDraft(true);
     render();
@@ -1904,23 +2368,23 @@ function buildButtons() {
     var c = document.createElement('span'); c.className = 'chk'; c.textContent = '✓'; b.appendChild(c);
     b.addEventListener('click', function () {
       touch();
-      if (!state.draft.liquids) state.draft.liquids = { coffee: false, water: false, other: false, what: state.draft.liqWhat || '' };
-      state.draft.liquids[l.key] = !state.draft.liquids[l.key];
+      if (!idr().liquids) idr().liquids = { coffee: false, water: false, other: false, what: idr().liqWhat || '' };
+      idr().liquids[l.key] = !idr().liquids[l.key];
       el('nothing').hidden = true;
       storeDraft(true);
       render();
-      if (l.key === 'other' && state.draft.liquids.other) el('w-Liquids').focus();
+      if (l.key === 'other' && idr().liquids.other) el('w-Liquids').focus();
     });
     el('c-Liquids').appendChild(b);
   });
   el('t-Liquids').addEventListener('click', function () {
     touch();
     // Taking Liquids off keeps the Something else words for when it is tapped again, as Food and Other do (Agent C, W2).
-    if (state.draft.liquids) {
-      state.draft.liqWhat = state.draft.liquids.what || '';
-      state.draft.liquids = null;
+    if (idr().liquids) {
+      idr().liqWhat = idr().liquids.what || '';
+      idr().liquids = null;
     } else {
-      state.draft.liquids = { coffee: false, water: false, other: false, what: state.draft.liqWhat || '' };
+      idr().liquids = { coffee: false, water: false, other: false, what: idr().liqWhat || '' };
     }
     settle();
     storeDraft(true);
@@ -1929,39 +2393,39 @@ function buildButtons() {
   el('w-Liquids').setAttribute('maxlength', String(WHAT_MAX));
   el('w-Liquids').addEventListener('input', function () {
     touch();
-    if (state.draft.liquids) state.draft.liquids.what = el('w-Liquids').value;
+    if (idr().liquids) idr().liquids.what = el('w-Liquids').value;
     limitNote('w-Liquids', WHAT_MAX, 'That line');
     storeDraft(false);
   });
   // Food (R84): the tap, and words if he wants (R66).
   el('t-Food').addEventListener('click', function () {
     touch();
-    state.draft.food.on = !state.draft.food.on;
+    idr().food.on = !idr().food.on;
     settle();
     storeDraft(true);
     render();
-    if (state.draft.food.on) el('food').focus();
+    if (idr().food.on) el('food').focus();
   });
   el('food').setAttribute('maxlength', String(FOOD_MAX));
   el('food').addEventListener('input', function () {
     touch();
-    state.draft.food.text = el('food').value;
+    idr().food.text = el('food').value;
     limitNote('food', FOOD_MAX, 'The Food box');
     settle();
     storeDraft(false);
   });
   el('t-Other').addEventListener('click', function () {
     touch();
-    state.draft.other.on = !state.draft.other.on;
+    idr().other.on = !idr().other.on;
     settle();
     storeDraft(true);
     render();
-    if (state.draft.other.on) el('other').focus();
+    if (idr().other.on) el('other').focus();
   });
   el('other').setAttribute('maxlength', String(OTHER_MAX));
   el('other').addEventListener('input', function () {
     touch();
-    state.draft.other.text = el('other').value;
+    idr().other.text = el('other').value;
     limitNote('other', OTHER_MAX, 'The Other box');
     settle();
     storeDraft(false);
@@ -2235,7 +2699,19 @@ function showScreen(s) {
 // ------------------------------------------------------------------ start
 
 function wire() {
-  el('save').addEventListener('click', save);
+  // First of all: taps in the screen just after it jumped are dropped (019-2; Agent W, W1).
+  document.addEventListener('click', function (e) {
+    if (Date.now() >= tapShield) return;
+    var t = e.target;
+    if (t && t.closest && t.closest('main')) { e.stopImmediatePropagation(); e.preventDefault(); }
+  }, true);
+  el('save').addEventListener('click', function () { if (state.fix && state.screen === 'Intraday') saveFix(); else save(); });
+  el('cancelfix').addEventListener('click', function () { cancelFix(''); });
+  // Tapping an entry in today's list opens it to change (019, R88).
+  el('today').addEventListener('click', function (e) {
+    var row = e.target && e.target.closest ? e.target.closest('.entry') : null;
+    if (row && row.getAttribute('data-id')) { shieldTaps(TAP_SHIELD_MS); openFix(row.getAttribute('data-id')); }
+  });
   el('undo').addEventListener('click', undo);
   el('edit').addEventListener('click', openPad);
   el('padam').addEventListener('click', function () { setFromPad('AM'); });
@@ -2256,31 +2732,31 @@ function wire() {
   el('why').setAttribute('maxlength', String(WHY_MAX));
   el('comments').addEventListener('input', function () {
     touch();
-    state.draft.comments = el('comments').value;
+    idr().comments = el('comments').value;
     limitNote('comments', COMMENT_MAX, 'Comments');
     settle();
-    if (!state.draft.fixed) renderWhen();
+    if (!idr().fixed) renderWhen();
     storeDraft(false);
   });
   el('notable').addEventListener('change', function () {
     touch();
-    state.draft.notable = el('notable').checked;
+    idr().notable = el('notable').checked;
     settle();
     storeDraft(true);
     render();
-    if (state.draft.notable) el('why').focus();
+    if (idr().notable) el('why').focus();
   });
   el('why').addEventListener('input', function () {
     touch();
-    state.draft.why = el('why').value;
+    idr().why = el('why').value;
     limitNote('why', WHY_MAX, 'The Why line');
     settle();
-    if (!state.draft.fixed) renderWhen();
+    if (!idr().fixed) renderWhen();
     storeDraft(false);
   });
   el('personal').addEventListener('change', function () {
     touch();
-    state.draft.personal = el('personal').checked;
+    idr().personal = el('personal').checked;
     settle();
     storeDraft(true);
     render();
@@ -2311,8 +2787,8 @@ function wire() {
   ['click', 'input', 'change'].forEach(function (type) {
     document.addEventListener(type, function (e) {
       var t = e.target;
-      if (!t || !t.closest || !t.closest('main') || t.closest('#savedbar, #error, #status, #save, #nothing, #else')) return;
-      var k = draftKey(state.screen);
+      if (!t || !t.closest || !t.closest('main') || t.closest('#savedbar, #error, #status, #save, #nothing, #else, #cancelfix, #fixbanner')) return;
+      var k = screenKey(state.screen);
       state.edits[k] = (state.edits[k] || 0) + 1;
     }, true);
   });
@@ -2336,7 +2812,7 @@ function wire() {
   setInterval(function () {
     var b = state.lastSaved;
     if (!cur().fixed) renderWhen();
-    if (b && b.until && Date.now() >= b.until && !el('savedbar').hidden) render();
+    if (b && barGone(b) && !el('savedbar').hidden) render();
     var d = currentLogDay();
     if (d !== lastDay) { lastDay = d; refreshDone(); render(); }
   }, 10000);
@@ -2385,7 +2861,8 @@ function limitNote(id, max, name) {
 // what the red line calls each one if it cannot be read (015).
 var KEPT = [['draft', 'the half-filled Intraday screen'], ['lastSaved', 'the green bar of your last Save'],
             ['link', 'the link to your sheet'], ['running', 'whether a walk or workout is running'],
-            ['draft-Morning', 'the half-filled Morning screen'], ['draft-Evening', 'the half-filled Evening screen']];
+            ['draft-Morning', 'the half-filled Morning screen'], ['draft-Evening', 'the half-filled Evening screen'],
+            [KEY_FIX, 'a change you were making to an entry']];
 function readKept(key) {
   var once = function () { return DL.get('kv', key).then(function (v) { return { ok: true, value: v }; }); };
   return once().catch(function () { return once(); }).catch(function () { return { ok: false }; });
@@ -2399,7 +2876,7 @@ function heldEnds() {
   if (state.edraft && state.edraft.endAns) out.push('Evening');
   return out;
 }
-function unreadScreen() { return SCREENS.some(function (s) { return !!state.unread[draftKey(s)]; }); }
+function unreadScreen() { return SLOTS.some(function (k) { return !!state.unread[k]; }); }
 // The red line about what could not be read, or '' when everything was (015).
 function unreadText() {
   // Storage not opened at all: nothing can be saved, whatever arrives (016; session 15 records check).
