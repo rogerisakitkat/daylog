@@ -136,3 +136,21 @@ h3 { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.06em; color
 .clearbtn { margin-top: 8px; width: 100%; text-align: center; }
 
 .ver { margin: 26px 12px 0; text-align: center; font-size: 12px; color: #6b7178; }
+
+/* Today's list (increment 018), as in the approved mockup round 2, picture 4 */
+.elsehead { margin: 22px 12px 0; padding-top: 12px; border-top: 1px dashed var(--line); font-weight: 700; font-size: 15px; }
+.list { margin: 0 12px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.entry { display: grid; grid-template-columns: minmax(5.4em, max-content) 1fr; column-gap: 10px; padding: 10px 12px; border-top: 1px solid var(--line); transition: background-color 1.5s; }
+.entry:first-child { border-top: 0; }
+.entry.new { background: var(--ok-soft); transition: none; }
+.et { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.eb { min-width: 0; }
+.ek { font-weight: 600; overflow-wrap: anywhere; }
+.ed { font-size: 14px; color: var(--muted); overflow-wrap: anywhere; }
+.ew { font-size: 15px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.em { font-size: 13px; color: var(--muted); }
+.en { font-size: 13px; margin-top: 3px; }
+.en.wait { color: var(--muted); }
+.en.bad { color: var(--bad); font-weight: 600; }
+.empty { padding: 12px; color: var(--muted); font-size: 14.5px; }
+.away { padding: 10px 12px; font-size: 14px; color: var(--wait); background: var(--wait-soft); }

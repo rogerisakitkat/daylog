@@ -49,7 +49,7 @@
  * that was not made say to enter again anything missing (the screen may show the
  * other copy's version).
  */
-var PAGE_VERSION = '016-5';
+var PAGE_VERSION = '018-3';
 var SCREENS = ['Morning', 'Intraday', 'Evening'];
 var SCORE_ROWS = ['Mind', 'Body', 'Balance'];
 var MORNING_SCORES = [{ label: 'Quality', key: 'Sleep quality' }, { label: 'Amount', key: 'Sleep amount' }];
@@ -404,6 +404,10 @@ function queued(fn) {
 // missed and cannot be compared, so it is not written (016-2), and a Save or Undo
 // that needs it writes nothing (a failure seen only in tests so far).
 function guarded(stores, decide, mode) {
+  // A step that writes entries makes today's list read them again (018): before it starts and once it is over.
+  var touchesEntries = (mode || 'readwrite') === 'readwrite' && stores.indexOf('entries') >= 0;
+  if (touchesEntries) listGen++;
+  var over = function () { if (touchesEntries) listGen++; };
   return DL.db().then(function (d) {
     return new Promise(function (resolve, reject) {
       var t = d.transaction(stores, mode || 'readwrite');
@@ -427,9 +431,9 @@ function guarded(stores, decide, mode) {
       });
       if (left === 0) go();
       // A step whose reads never all answered is treated as not readable (Agent P, note 8).
-      t.oncomplete = function () { resolve(res || { refused: true, unreadable: true, got: got, missed: missed, wrote: {} }); };
-      t.onerror = function () { reject(failed || t.error || new Error('storage error')); };
-      t.onabort = function () { reject(failed || t.error || new Error('storage aborted')); };
+      t.oncomplete = function () { over(); resolve(res || { refused: true, unreadable: true, got: got, missed: missed, wrote: {} }); };
+      t.onerror = function () { over(); reject(failed || t.error || new Error('storage error')); };
+      t.onabort = function () { over(); reject(failed || t.error || new Error('storage aborted')); };
     });
   });
 }
@@ -945,6 +949,9 @@ function save() {
       return;
     }
     state.lastSaved = bar;
+    // The entry just saved is shaded green in today's list for a moment (G24; 018).
+    state.flash = { id: bar.id || (bar.ended && bar.ended.id) || null, until: Date.now() + 4000 };
+    setTimeout(refreshList, 4100);
     state.storedEdits[dk] = ed0;      // what he had on the screen is saved (016-4)
     delete state.unread.lastSaved;    // replaced by this Save, as always (015-3; Agent N, recheck R3)
     el('error').hidden = true;
@@ -1082,9 +1089,7 @@ function refreshDone() {
   if (doneBusy) return Promise.resolve();
   doneBusy = true;
   var today = currentLogDay();
-  return DL.getAll('entries').then(function (all) {
-    var newest = {};
-    all.forEach(function (v) { if (!newest[v.id] || v.version > newest[v.id].version) newest[v.id] = v; });
+  return newestEntries().then(function (newest) {
     var done = { Morning: false, Evening: false };
     Object.keys(newest).forEach(function (id) {
       var v = newest[id], f = v.fields || {};
@@ -1237,7 +1242,178 @@ function askBackgroundSend() {
   } catch (e) { /* not available */ }
 }
 
+// ------------------------------------------------------------------ today's list (018)
+// Every entry of the current day (05:00 to 05:00) that stands, newest first, from the
+// phone's own storage: the newest version of each, undone ones left out (R86), with a
+// grey note while it waits to send (R87) and a red one if the sheet turned it away
+// (G018-3). Only entries of the same kind as the page (test or real, G018-5).
+// The entries are read again only when they may have changed (listGen: a Save or Undo
+// here, a message from another open copy, coming back to the page), not at every tap:
+// with a year of entries stored, reading them all takes a moment (018, perf check).
+var listBusy = false, listAgain = false;
+var listGen = 1, listReadGen = 0, listNewest = null, listRows = null, listRowsKey = '', listDrawn = '';
+var newestReading = null, newestReadingGen = 0;
+// The newest version of every entry, by id: read once for each change (listGen) and shared
+// by today's list and the check marks on Morning and Evening (refreshDone), so a Save
+// reads the entries once, as page 016-5 did (018-2; Agent V, F1).
+function newestEntries() {
+  var gen = listGen;
+  if (listNewest && listReadGen === gen) return Promise.resolve(listNewest);
+  if (newestReading && newestReadingGen === gen) return newestReading;
+  newestReadingGen = gen;
+  var p = DL.getAll('entries').then(function (all) {
+    var newest = {};
+    all.forEach(function (v) {
+      if (v && typeof v.id === 'string' && typeof v.version === 'number' && (!newest[v.id] || v.version > newest[v.id].version)) newest[v.id] = v;
+    });
+    listNewest = newest;
+    listReadGen = gen;
+    listRows = null;
+    return newest;
+  });
+  newestReading = p;
+  var clear = function () { if (newestReading === p) newestReading = null; };
+  p.then(clear, clear);
+  return p;
+}
+function refreshList() {
+  if (listBusy) { listAgain = true; return Promise.resolve(); }
+  listBusy = true;
+  var today = currentLogDay();
+  var done = function () { listBusy = false; if (listAgain) { listAgain = false; refreshList(); } };
+  var failed = function () {
+    // Nothing new to show: the last drawing stays; an empty list says so (018-2; Agent V, W5).
+    var box = el('today');
+    if (!box.firstChild) box.appendChild(listDiv('empty', 'Today’s list could not be read just now. If this keeps happening, close the page and open it again.'));
+    listDrawn = '';
+    done();
+  };
+  return Promise.all([newestEntries(), DL.getAll('outbox')]).then(function (a) {
+    var newest = a[0];
+    var waiting = {}, refused = {};
+    a[1].forEach(function (x) {
+      var pl = x && x.payload;
+      if (!pl || pl.kind !== 'log') return;
+      if (x.status === 'refused') refused[pl.id] = true; else waiting[pl.id] = true;
+    });
+    var key = listReadGen + '|' + today + '|' + !!state.test;
+    if (!listRows || listRowsKey !== key) {
+      listRows = Object.keys(newest).map(function (id) { return newest[id]; }).filter(function (v) {
+        var f = v.fields || {};
+        return v.state !== 'undone' && f['Log day'] === today && !!v.test === !!state.test;
+      });
+      listRows.sort(function (x, y) {
+        var kx = listKey(x), ky = listKey(y);
+        if (kx !== ky) return kx < ky ? 1 : -1;
+        return (y.seq || 0) - (x.seq || 0);
+      });
+      listRowsKey = key;
+    }
+    // Drawn again only when something shown would change (018, perf check).
+    var flashOn = !!(state.flash && Date.now() < state.flash.until) ? state.flash.id : '';
+    var sig = key + '|' + Object.keys(waiting).sort().join(',') + '|' + Object.keys(refused).sort().join(',') + '|' + flashOn;
+    // The entry just saved, when its day is not today (a time changed to before 5:00 AM or to
+    // the evening before): a line says where it went (018-2; Agent V, W4).
+    var bar = state.lastSaved, away = '';
+    if (bar && !bar.undone && bar.id && !(bar.until && Date.now() >= bar.until) && newest[bar.id] &&
+        newest[bar.id].state !== 'undone' && !!newest[bar.id].test === !!state.test) {
+      var bd = (newest[bar.id].fields || {})['Log day'];
+      if (typeof bd === 'string' && bd !== today) away = bd;
+    }
+    sig += '|' + away;
+    if (sig !== listDrawn || !el('today').firstChild) { drawList(listRows, waiting, refused, away); listDrawn = sig; }
+  }).then(done, failed);
+}
+function listKey(v) {
+  var f = v.fields || {};
+  return String(f['Calendar date'] || f['Log day'] || '') + ' ' + String(f['Time'] || '');
+}
+function listScores(f, rows, out) {
+  var scored = rows.filter(function (r) { return typeof f[r.key] === 'number'; });
+  scored.forEach(function (r) { out.push(r.name + ' ' + signed(f[r.key])); });
+  if (scored.length) rows.forEach(function (r) { if (scored.indexOf(r) < 0) out.push(r.name + ' not scored'); });
+}
+function listTime(t) { return typeof t === 'string' && /^\d\d:\d\d$/.test(t) ? ampm(t) : '—'; }
+// What one entry shows: a title, detail lines, its words and small marks (G11, G018-4).
+function listParts(f) {
+  var title = [], details = [], words = [], marks = [];
+  var screen = f['Screen'] || 'Intraday';
+  if (screen === 'Morning') {
+    title.push('Morning');
+    var m = [];
+    MORNING_TIMES.forEach(function (k) { if (f[k] !== undefined) m.push(k + ' ' + listTime(f[k])); });
+    listScores(f, MORNING_SCORES.map(function (s) { return { key: s.key, name: s.key }; }), m);
+    if (f['Phone before bed'] !== undefined) m.push('Phone before bed: ' + f['Phone before bed']);
+    if (m.length) details.push(m.join(' · '));
+    if (f['Sleep in own words'] !== undefined) words.push(['', f['Sleep in own words']]);
+  } else if (screen === 'Evening') {
+    title.push('Evening');
+    var e = [], wd = [];
+    listScores(f, EVENING_SCORES.map(function (s) { return { key: s.key, name: s.label }; }), wd);
+    if (wd.length) e.push('Whole day: ' + wd.join(', '));
+    EVENING_TIMES.forEach(function (k) { if (f[k] !== undefined) e.push(k + ' ' + listTime(f[k])); });
+    if (e.length) details.push(e.join(' · '));
+    if (f['Day notable'] === 'Yes') marks.push('Day notable');
+    if (f['Day notable why'] !== undefined) words.push(['Why notable: ', f['Day notable why']]);
+  } else {
+    ['Shake', 'Medicine'].forEach(function (k) {
+      if (f[k] === undefined) return;
+      title.push(k + ' · ' + f[k]);
+      if (f[k] === SOMETHING_ELSE && f[k + ' contents'] !== undefined) words.push([k + ': ', f[k + ' contents']]);
+    });
+    if (f['Workout'] !== undefined) {
+      title.push('Workout · ' + f['Workout']);
+      var end = f['Workout ended'];
+      details.push(end === undefined ? listTime(f['Time']) + ', not ended yet'
+                   : end === END_NOT_KNOWN ? listTime(f['Time']) + ' to an end time not known'
+                   : listTime(f['Time']) + ' to ' + listTime(end));
+    }
+    var liq = LIQUIDS.filter(function (l) { return f[l.column] === 'Yes'; }).map(function (l) { return l.name; });
+    if (liq.length) title.push('Liquids · ' + (liq.length === 1 ? liq[0] : liq.slice(0, -1).join(', ') + ' and ' + liq[liq.length - 1]));
+    if (f['Other liquid, what'] !== undefined) words.push(['Liquids: ', f['Other liquid, what']]);
+    if (f['Food or snack'] === 'Yes') title.push('Food');
+    if (f['Food or snack, what'] !== undefined) words.push(['Food: ', f['Food or snack, what']]);
+    if (f['Other'] !== undefined) { title.push('Other'); words.push(['Other: ', f['Other']]); }
+    var sc = [];
+    listScores(f, SCORE_ROWS.map(function (k) { return { key: k, name: k }; }), sc);
+    if (sc.length) details.push(sc.join(' · '));
+    if (f['Comments'] !== undefined) words.unshift(['', f['Comments']]);
+    if (f['Notable'] === 'Yes') marks.push('Notable');
+    if (f['Notable why'] !== undefined) words.push(['Why notable: ', f['Notable why']]);
+    if (f['Personal'] === 'Yes') marks.push('Personal');
+    if (!title.length) title.push(sc.length ? 'Scores' : 'Intraday');
+  }
+  // Semicolons between the things ticked, since a workout's kind can hold commas of its own (018-2; Agent V, W2; G018-6).
+  return { title: title.join('; '), details: details, words: words, marks: marks };
+}
+function listDiv(cls, text) { var d = document.createElement('div'); d.className = cls; d.textContent = text; return d; }
+function drawList(rows, waiting, refused, away) {
+  var box = el('today');
+  box.textContent = '';
+  if (away) box.appendChild(listDiv('away', 'The entry you just saved belongs to ' + weekday(away) + ' ' + usDate(away) + ', so it is not in today’s list. Each day in the list runs from 5:00 AM to 5:00 AM.'));
+  if (!rows.length) { box.appendChild(listDiv('empty', 'Nothing saved yet today.')); return; }
+  var flash = state.flash && Date.now() < state.flash.until ? state.flash.id : null;
+  rows.forEach(function (v) {
+    var f = v.fields || {}, parts = listParts(f);
+    var row = document.createElement('div');
+    row.className = 'entry' + (flash && v.id === flash ? ' new' : '');
+    row.setAttribute('data-id', v.id);
+    row.appendChild(listDiv('et', listTime(f['Time'])));
+    var body = document.createElement('div');
+    body.className = 'eb';
+    body.appendChild(listDiv('ek', parts.title));
+    parts.details.forEach(function (t) { body.appendChild(listDiv('ed', t)); });
+    parts.words.forEach(function (w) { body.appendChild(listDiv('ew', w[0] + '“' + String(w[1]) + '”')); });
+    if (parts.marks.length) body.appendChild(listDiv('em', parts.marks.join(' · ')));
+    if (refused[v.id]) body.appendChild(listDiv('en bad', 'The sheet did not accept this'));
+    else if (waiting[v.id]) body.appendChild(listDiv('en wait', 'waiting to send'));
+    row.appendChild(body);
+    box.appendChild(row);
+  });
+}
+
 function refreshStatus() {
+  refreshList();                    // today's list follows every change the lines at the top follow (018)
   return Promise.all([DL.counts(), DL.get('kv', 'link'), DL.get('kv', 'codeProblem')]).then(function (a) {
     var c = a[0], link = a[1], codeProblem = a[2];
     var lines = [];
@@ -1420,6 +1596,7 @@ function render() {
   el('testbar').hidden = !state.test;
   renderHeads();
   SCREENS.forEach(function (s) { el('sc-' + s).hidden = s !== screen; });
+  el('else').hidden = screen !== 'Intraday';      // today's list: Intraday only (018, G018-1)
 
   // Green bar after Save (G10, D48)
   var bar = state.lastSaved;
@@ -2121,6 +2298,7 @@ function wire() {
       // Not while a screen could not be read: what he typed there is not stored (015-2; Agent N, finding 2).
       storeDraft(true).then(function () { if (state.reloadWhenHidden && !unreadScreen()) location.reload(); });
     } else {
+      listGen++;                    // read today's list again on coming back (018)
       catchUp();                    // another open copy may have changed things meanwhile (016)
       render();
       kick();
@@ -2133,16 +2311,20 @@ function wire() {
   ['click', 'input', 'change'].forEach(function (type) {
     document.addEventListener(type, function (e) {
       var t = e.target;
-      if (!t || !t.closest || !t.closest('main') || t.closest('#savedbar, #error, #status, #save, #nothing')) return;
+      if (!t || !t.closest || !t.closest('main') || t.closest('#savedbar, #error, #status, #save, #nothing, #else')) return;
       var k = draftKey(state.screen);
       state.edits[k] = (state.edits[k] || 0) + 1;
     }, true);
   });
-  window.addEventListener('pageshow', function (e) { if (e.persisted) catchUp(); });
+  window.addEventListener('pageshow', function (e) { if (e.persisted) { listGen++; catchUp(); } });
   try {
     var bc = new BroadcastChannel('daylog');
     keptChannel = bc;               // this page's own messages do not come back to it
     bc.onmessage = function (e) {
+      // Another open copy saved or undid something ('kept'): today's list reads the entries
+      // again. A finished send ('changed', also this page's own) touches only what waits to
+      // be sent, which the list reads every time anyway (018-2; Agent V, F1).
+      if (e && e.data === 'kept') listGen++;
       refreshStatus();
       if (e && e.data === 'kept' && document.visibilityState === 'visible') catchUp();
     };
