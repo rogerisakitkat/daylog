@@ -19,6 +19,11 @@
     <button type="button" id="h-Intraday" data-s="Intraday" class="on">Intraday</button>
     <button type="button" id="h-Evening" data-s="Evening">Evening<span class="hk" id="hk-Evening" hidden> &#10003;</span></button>
   </nav>
+  <!-- An entry being changed (increment 019; pinned at the top from 020, R93) -->
+  <div id="fixbanner" class="fixbanner" hidden>
+    <b id="fixtitle"></b>
+    <div class="fixhelp">Save changes or Cancel at the bottom.</div>
+  </div>
 </header>
 
 <main>
@@ -28,12 +33,6 @@
   <div id="savedbar" class="savedbar" hidden>
     <p><b id="savedtitle"></b><br><span id="savedwhat"></span></p>
     <button type="button" id="undo" class="btn">Undo</button>
-  </div>
-
-  <!-- An entry being changed (increment 019; R88) -->
-  <div id="fixbanner" class="fixbanner" hidden>
-    <b id="fixtitle"></b>
-    <div class="fixhelp">Change anything, then tap Save changes at the bottom. Cancel leaves it as it was.</div>
   </div>
 
   <div class="when">

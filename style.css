@@ -156,10 +156,15 @@ h3 { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.06em; color
 .away { padding: 10px 12px; font-size: 14px; color: var(--wait); background: var(--wait-soft); }
 
 /* Changing a saved entry (increment 019) */
-.fixbanner { margin: 10px 12px 0; padding: 9px 11px; border-radius: 12px; background: var(--accent-soft); border: 2px solid var(--accent); font-size: 14.5px; }
+.fixbanner { margin: 6px 12px 6px; padding: 7px 11px; border-radius: 12px; background: var(--accent-soft); border: 2px solid var(--accent); font-size: 14.5px; }
 .fixbanner b { color: var(--accent); }
 .fixhelp { font-size: 13.5px; color: var(--muted); margin-top: 2px; }
 .btn.wide { display: block; width: calc(100% - 24px); margin: 8px 12px 0; padding: 12px; text-align: center; font-size: 16px; }
 .listhint { margin: -2px 12px 6px; font-size: 13px; color: var(--muted); }
 .entry { cursor: pointer; }
 .en.chg { color: var(--muted); }
+
+/* A little harder to change an entry (increment 020; R92, R93) */
+body.fixing, body.fixing header { background: #fbf0c4; }           /* pale yellow while an entry is being changed */
+.chgbtn { display: block; width: 100%; margin-top: 8px; border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: 10px; padding: 9px 10px; font-weight: 700; font-size: 15px; text-align: center; }
+.entry.armed { background: var(--accent-soft); }

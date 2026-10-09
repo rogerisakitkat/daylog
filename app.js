@@ -64,8 +64,15 @@
  * opened as their day and Screen say (N3); opening an entry counts as touching the page (N5).
  * 019-3: the green bar is hidden while an entry is being changed (it showed the last Save
  * above the banner); it comes back after Save changes or Cancel.
+ * 020 (2026-10-09): a little harder to change an entry (R91 to R94). A tap on an entry only
+ * shows a "Change this entry" button under it (R92); the button opens it. While an entry is
+ * being changed the screen is pale yellow, the box naming it is pinned under the headings,
+ * and the button reads "Save changes to 2:05 PM entry" (R93). No extra question (R94).
+ * 020-2 (Agent W): the Change button opens the entry only once it has been showing for
+ * 0.7 seconds, so a slow second tap cannot land on a button that just moved under the finger
+ * (W1); the "another day" question goes when Edit changes the time again (W3).
  */
-var PAGE_VERSION = '019-3';
+var PAGE_VERSION = '020-2';
 var SCREENS = ['Morning', 'Intraday', 'Evening'];
 var SCORE_ROWS = ['Mind', 'Body', 'Balance'];
 var MORNING_SCORES = [{ label: 'Quality', key: 'Sleep quality' }, { label: 'Amount', key: 'Sleep amount' }];
@@ -1017,6 +1024,7 @@ function save() {
       return;
     }
     state.lastSaved = bar;
+    armedId = null;                   // the Change button goes after a Save (020)
     // The entry just saved is shaded green in today's list for a moment (G24; 018).
     state.flash = { id: bar.id || (bar.ended && bar.ended.id) || null, until: Date.now() + 4000 };
     setTimeout(refreshList, 4100);
@@ -1320,6 +1328,7 @@ function openFix(id) {
 // Leaves the change without saving it; also used when nothing was changed.
 function cancelFix(note) {
   if (!state.fix) return;
+  armedId = null;
   closePad();
   closeTpad();
   state.fix = null;
@@ -1451,6 +1460,7 @@ function saveFix() {
       return;
     }
     state.lastSaved = bar;
+    armedId = null;
     state.flash = { id: fx.id, until: Date.now() + 4000 };     // shaded green in today's list (G24)
     setTimeout(refreshList, 4100);
     state.storedEdits[KEY_FIX] = ed0;
@@ -1647,6 +1657,9 @@ function askBackgroundSend() {
 var listBusy = false, listAgain = false;
 var listGen = 1, listReadGen = 0, listNewest = null, listRows = null, listRowsKey = '', listDrawn = '';
 var listChanged = {};             // for each entry, when it was last changed with Save changes (019, R89)
+var armedId = null;               // the entry showing "Change this entry" (020, R92); never stored
+var armedAt = 0;                  // when it appeared: the button works only after ARMED_MS (020-2; Agent W, W1)
+var ARMED_MS = 700;
 var newestReading = null, newestReadingGen = 0;
 // The newest version of every entry, by id: read once for each change (listGen) and shared
 // by today's list and the check marks on Morning and Evening (refreshDone), so a Save
@@ -1720,7 +1733,8 @@ function refreshList() {
       if (typeof bd === 'string' && bd !== today) away = bd;
     }
     var awayFix = !!(away && bar.fix);
-    sig += '|' + away + '|' + awayFix;
+    if (armedId && !listRows.some(function (v) { return v.id === armedId; })) armedId = null;
+    sig += '|' + away + '|' + awayFix + '|' + (armedId || '');
     if (sig !== listDrawn || !el('today').firstChild) { drawList(listRows, waiting, refused, away, awayFix); listDrawn = sig; }
   }).then(done, failed);
 }
@@ -1810,8 +1824,9 @@ function drawList(rows, waiting, refused, away, awayFix) {
   rows.forEach(function (v) {
     var f = v.fields || {}, parts = listParts(f);
     var row = document.createElement('div');
-    row.className = 'entry' + (flash && v.id === flash ? ' new' : '');
+    row.className = 'entry' + (flash && v.id === flash ? ' new' : '') + (armedId === v.id ? ' armed' : '');
     row.setAttribute('data-id', v.id);
+    row.setAttribute('data-screen', f['Screen'] || 'Intraday');
     row.appendChild(listDiv('et', listTime(f['Time'])));
     var body = document.createElement('div');
     body.className = 'eb';
@@ -1823,6 +1838,13 @@ function drawList(rows, waiting, refused, away, awayFix) {
     if (ch) body.appendChild(listDiv('en chg', 'changed ' + whenOf(ch.date, ch.time, dateStr(new Date()))));     // R89
     if (refused[v.id]) body.appendChild(listDiv('en bad', 'The sheet did not accept this'));
     else if (waiting[v.id]) body.appendChild(listDiv('en wait', 'waiting to send'));
+    if (armedId === v.id) {
+      var cb = document.createElement('button');
+      cb.type = 'button';
+      cb.className = 'chgbtn';
+      cb.textContent = 'Change this entry';
+      body.appendChild(cb);
+    }
     row.appendChild(body);
     box.appendChild(row);
   });
@@ -2028,7 +2050,8 @@ function render() {
     var fd = calDateOf(fo);
     el('fixtitle').textContent = 'Changing your entry of ' + (isHM(fo['Time']) ? whenOf(fd, fo['Time'], dateStr(new Date())) : '');
   }
-  el('save').textContent = fixing ? 'Save changes' : 'Save';
+  document.body.classList.toggle('fixing', fixing);          // pale yellow while changing (020, R93)
+  el('save').textContent = fixing ? 'Save changes to ' + (isHM(state.fix.orig['Time']) ? ampm(state.fix.orig['Time']) + ' ' : '') + 'entry' : 'Save';
   el('cancelfix').hidden = !fixing;
   var usig = JSON.stringify([fixExtra('Shake'), fixExtra('Medicine')]);
   if (usig !== usualSig) buildUsualChoices();
@@ -2680,6 +2703,12 @@ function setFromPad(half) {
   var dr = cur();
   dr.fixed = got;
   dr.edited = true;
+  // The "another day" question is about the time asked; a new time asks again if needed (020-2; Agent W, W3).
+  if (state.fix && state.screen === 'Intraday' && state.fixConfirm) {
+    state.fixConfirm = null;
+    var e = el('error');
+    if (!e.hidden && /^This time puts the entry on /.test(e.textContent)) { e.hidden = true; specificShown = ''; }
+  }
   storeDraft(true);
   closePad();
   render();
@@ -2687,6 +2716,7 @@ function setFromPad(half) {
 
 function showScreen(s) {
   if (SCREENS.indexOf(s) < 0 || s === state.screen) return;
+  armedId = null;                   // the Change button goes when he leaves Intraday (020)
   storeDraft(true);
   state.screen = s;
   closePad();
@@ -2708,9 +2738,26 @@ function wire() {
   el('save').addEventListener('click', function () { if (state.fix && state.screen === 'Intraday') saveFix(); else save(); });
   el('cancelfix').addEventListener('click', function () { cancelFix(''); });
   // Tapping an entry in today's list opens it to change (019, R88).
+  // From 020 a tap only shows "Change this entry" under the entry; that button opens it (R92).
   el('today').addEventListener('click', function (e) {
-    var row = e.target && e.target.closest ? e.target.closest('.entry') : null;
-    if (row && row.getAttribute('data-id')) { shieldTaps(TAP_SHIELD_MS); openFix(row.getAttribute('data-id')); }
+    var t = e.target;
+    var row = t && t.closest ? t.closest('.entry') : null;
+    if (!row || !row.getAttribute('data-id')) return;
+    var id = row.getAttribute('data-id');
+    shieldTaps(TAP_SHIELD_MS);
+    if (t.closest('.chgbtn')) {
+      if (Date.now() - armedAt < ARMED_MS) return;             // the button only just appeared under his finger (020-2)
+      armedId = null; openFix(id); return;
+    }
+    if (row.getAttribute('data-screen') !== 'Intraday') {        // Morning and Evening: the note, no button (G019-3)
+      armedId = null;
+      refreshList();
+      showNote('Morning and Evening entries can be changed after the next update.');
+      return;
+    }
+    armedId = armedId === id ? null : id;
+    armedAt = Date.now();
+    refreshList();
   });
   el('undo').addEventListener('click', undo);
   el('edit').addEventListener('click', openPad);
