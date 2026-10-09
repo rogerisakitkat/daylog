@@ -82,6 +82,14 @@
       <button type="button" class="tile" id="t-Other"><span class="chk">&#10003;</span>Other</button>
     </div>
     <div id="running" class="runline" hidden></div>
+    <!-- The end of an ended walk or workout being changed (increment 021, R95) -->
+    <div id="fixend" class="fixend" hidden>
+      <div class="tbox inq">
+        <div class="trow" id="fixendrow"><span class="tl">Ended at</span><button type="button" class="tset" id="fixendset">tap to set</button></div>
+      </div>
+      <button type="button" id="fixendunknown" class="btn dk" aria-pressed="false">Don't know</button>
+      <div id="fixendnote" class="endqnote"></div>
+    </div>
     <div id="p-Workout" class="panel" hidden>
       <div class="t">Workout: what kind?</div>
       <div id="c-Workout"></div>
@@ -154,6 +162,9 @@
   <button type="button" id="save" class="save">Save</button>
   <button type="button" id="cancelfix" class="btn quiet wide" hidden>Cancel</button>
   <div id="nothing" class="nothing" hidden>Nothing to save yet</div>
+
+  <!-- A Morning or Evening entry being changed while Intraday shows (increment 021, G021-2) -->
+  <div id="fixaway" class="fixaway" hidden></div>
 
   <!-- Today's list (increment 018; approved mockup round 2, picture 4; R34, R43, G11, G24, R86, R87) -->
   <section id="else" class="else" hidden>

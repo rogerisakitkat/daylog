@@ -71,8 +71,18 @@
  * 020-2 (Agent W): the Change button opens the entry only once it has been showing for
  * 0.7 seconds, so a slow second tap cannot land on a button that just moved under the finger
  * (W1); the "another day" question goes when Edit changes the time again (W3).
+ * 021 (2026-10-09): Morning and Evening entries can be changed too, on their own screens, the
+ * same way (R88, R92, R93): the Change button opens them there, yellow, with "Save changes" and
+ * "Cancel"; afterwards the app goes back to Intraday (G021-1). The end of an ended walk or
+ * workout can be changed to another time or to "Don't know", never taken off (R95, D141).
+ * A Morning or Evening change in progress is kept in "draft-fix" with dr null and its screen in
+ * sdr, so page 020-2 (the way back) treats it as unreadable and never opens or writes over it.
+ * 021-2 (Agent X): a walk or workout made longer than 12 hours by a changed start (Edit) or end is
+ * asked about once more at Save changes (X1); "Saved when you tap Save changes" (N6).
+ * 021-3 (Agent X's recheck): the red lines about the entry being changed (12 hours, another day,
+ * start after end) go after Cancel, and after Edit or a new end changes what they were about.
  */
-var PAGE_VERSION = '020-2';
+var PAGE_VERSION = '021-3';
 var SCREENS = ['Morning', 'Intraday', 'Evening'];
 var SCORE_ROWS = ['Mind', 'Body', 'Balance'];
 var MORNING_SCORES = [{ label: 'Quality', key: 'Sleep quality' }, { label: 'Amount', key: 'Sleep amount' }];
@@ -260,19 +270,29 @@ function fillOther(d, empty) {
   return d;
 }
 
-// What each screen shows: on Intraday, the entry being changed while there is one (019).
+// The screen a change in progress is on (021): Morning, Evening or Intraday.
+function fixScreenOf(fx) { return fx && (fx.screen === 'Morning' || fx.screen === 'Evening') ? fx.screen : 'Intraday'; }
+function fixOn(screen) { return !!state.fix && fixScreenOf(state.fix) === screen; }
+// What each screen shows: the entry being changed on that screen while there is one (019, 021).
 function draftOf(screen) {
-  return screen === 'Morning' ? state.mdraft : (screen === 'Evening' ? state.edraft : (state.fix ? state.fix.dr : state.draft));
+  if (fixOn(screen)) return state.fix.dr;
+  return screen === 'Morning' ? state.mdraft : (screen === 'Evening' ? state.edraft : state.draft);
 }
 function idr() { return draftOf('Intraday'); }
+// A change in progress as it is kept on the phone: on Morning or Evening its screen goes in sdr
+// and dr is null, so page 020-2 (the way back) never takes it for an Intraday change (021).
+function storedFix(f) {
+  if (fixScreenOf(f) === 'Intraday') return f;
+  return { id: f.id, base: f.base, test: f.test, orig: f.orig, screen: f.screen, dr: null, sdr: f.dr, opened: f.opened };
+}
 // The four things kept like half-filled screens, by their key in storage (019 adds KEY_FIX).
 var SLOTS = ['draft', 'draft-Morning', 'draft-Evening', KEY_FIX];
 function valueOfKey(k) {
-  if (k === KEY_FIX) return state.fix || undefined;
+  if (k === KEY_FIX) return state.fix ? storedFix(state.fix) : undefined;
   return k === 'draft' ? state.draft : (k === 'draft-Morning' ? state.mdraft : state.edraft);
 }
 // The key his taps and typing on a screen change: the change in progress while there is one.
-function screenKey(screen) { return screen === 'Intraday' && state.fix ? KEY_FIX : draftKey(screen); }
+function screenKey(screen) { return fixOn(screen) ? KEY_FIX : draftKey(screen); }
 function setDraftOf(screen, d) {
   if (screen === 'Morning') state.mdraft = d; else if (screen === 'Evening') state.edraft = d; else state.draft = d;
 }
@@ -432,7 +452,9 @@ function fp(k, v) {
 }
 // A change in progress as the page uses it: its screen with every part (019).
 function normFix(v) {
-  return { id: v.id, base: v.base, test: !!v.test, orig: v.orig, dr: fillDraft(v.dr), opened: v.opened === undefined ? null : v.opened };
+  var scr = fixScreenOf(v);
+  var d = scr === 'Intraday' ? fillDraft(v.dr) : fillOther(v.sdr !== undefined ? v.sdr : v.dr, emptyOf(scr));
+  return { id: v.id, base: v.base, test: !!v.test, orig: v.orig, screen: scr, dr: d, opened: v.opened === undefined ? null : v.opened };
 }
 
 // The page's own storage steps start at once, as on 015-3 (016-2; Agent P, W1): the
@@ -613,6 +635,8 @@ function fixedOk(f) { return noneOr(f, function (x) { return isObj(x) && isDay(x
 function endAnsOk(a) {
   return noneOr(a, function (x) { return isObj(x) && optBool(x.unknown) && noneOr(x.time, isHM) && optStr(x.forId); });
 }
+// A new end typed for an ended walk or workout being changed (021, R95).
+function newEndOk(x) { return isObj(x) && (x.unknown === true || (isHM(x.time) && isNum(x.at) && noneOr(x.date, isDay) && noneOr(x.from, isNum))); }
 function runningOk(r) {
   return isObj(r) && typeof r.id === 'string' && isNum(r.version) && typeof r.kind === 'string' && isObj(r.fields) &&
          isNum(r.startAt) && isDay(r.startDate) && isHM(r.startTime);
@@ -630,7 +654,8 @@ function kindOk(k, v) {
   if (k === 'draft') {
     return isObj(v) && scoresOk(v.scores, SCORE_ROWS) && fixedOk(v.fixed) && optStr(v.comments) && optStr(v.why) &&
            optBool(v.notable) && optBool(v.personal) && optStr(v.liqWhat) &&
-           noneOr(v.workout, function (w) { return isObj(w) && optStr(w.kind); }) && optBool(v.endTick) && endAnsOk(v.endAns);
+           noneOr(v.workout, function (w) { return isObj(w) && optStr(w.kind); }) && optBool(v.endTick) && endAnsOk(v.endAns) &&
+           noneOr(v.newEnd, newEndOk);
   }
   if (k === 'draft-Morning') {
     return isObj(v) && timesOk(v.times, MORNING_TIMES) && scoresOk(v.scores, MORNING_SCORES.map(function (s) { return s.key; })) &&
@@ -641,8 +666,13 @@ function kindOk(k, v) {
            fixedOk(v.fixed) && optBool(v.notable) && optStr(v.why) && endAnsOk(v.endAns);
   }
   if (k === KEY_FIX) {
-    return v === null || (isObj(v) && typeof v.id === 'string' && isNum(v.base) && v.base >= 1 && isObj(v.orig) &&
-                          kindOk('draft', v.dr) && isObj(v.dr.fixed) && optBool(v.test));
+    if (v === null) return true;
+    if (!(isObj(v) && typeof v.id === 'string' && isNum(v.base) && v.base >= 1 && isObj(v.orig) && optBool(v.test))) return false;
+    if (v.screen !== undefined && v.screen !== 'Intraday' && v.screen !== 'Morning' && v.screen !== 'Evening') return false;
+    var scr = fixScreenOf(v);
+    if (scr === 'Intraday') return kindOk('draft', v.dr) && isObj(v.dr.fixed);
+    var d = v.sdr !== undefined ? v.sdr : v.dr;          // as kept (dr null, sdr) or as used
+    return (v.sdr === undefined || v.dr === null) && kindOk('draft-' + scr, d) && isObj(d.fixed);
   }
   return true;
 }
@@ -686,7 +716,7 @@ function isStale() {
 // once the day it began on is over (R80).
 function endBoxOn(screen) {
   if (!state.running) return false;
-  if (screen === 'Intraday' && state.fix) return false;      // not while an entry is being changed (019)
+  if (fixOn(screen)) return false;      // not while an entry is being changed on that screen (019; Evening from 021, G021-3)
   return screen === 'Evening' || (screen === 'Intraday' && isStale());
 }
 function endAnswered(dr) {
@@ -870,7 +900,7 @@ var lastSaveTap = 0;
 function save() {
   var screen = state.screen;
   if (state.reading) return;                        // the opening read is not finished (013; a few milliseconds)
-  if (screen === 'Intraday' && state.fix) { saveFix(); return; }      // 019
+  if (fixOn(screen)) { saveFix(); return; }      // 019; Morning and Evening from 021
   if (padShowing('tpad') && el('tpadinput').value.trim() !== '') {
     el('tpadmsg').textContent = 'Tap AM or PM to set this time first, or Cancel.';
     el('tpadmsg').className = 'padmsg bad';
@@ -1065,7 +1095,7 @@ function undo() {
   var bar = state.lastSaved;
   if (bar && barGone(bar)) { render(); return; }
   if (!bar || bar.undone || bar.fix || state.saving) return;      // no Undo after Save changes (R90)
-  if (state.fix && state.screen === 'Intraday') return;            // not while an entry is being changed (G019-1)
+  if (fixOn(state.screen)) return;            // not while an entry is being changed on this screen (G019-1)
   if (state.unread.running && (bar.started || bar.ended)) {      // never written over (015)
     showError('This phone could not read whether a walk or workout is running, so this Save can’t be undone just now. ' +
               'Close the page and open it again, then tap Undo.');
@@ -1203,6 +1233,27 @@ function fixDraftFrom(f) {
   d.other = { on: f['Other'] !== undefined, text: typeof f['Other'] === 'string' ? f['Other'] : '' };
   return d;
 }
+// The Morning or Evening screen filled in from a saved entry's fields (021).
+function scoreOf(x) {
+  var n = typeof x === 'string' && /^[+-]?\d$/.test(x.trim()) ? Number(x) : x;     // a score kept as text (Agent W, N3)
+  return SCORE_VALUES.indexOf(n) >= 0 ? n : null;
+}
+function fixScreenDraftFrom(f, scr) {
+  var d = emptyOf(scr);
+  var date = calDateOf(f);
+  d.fixed = { date: date, time: f['Time'], at: momentOf(date, f['Time']).getTime() };
+  d.edited = true;                                   // its time is never dropped (settleOf)
+  (scr === 'Morning' ? MORNING_TIMES : EVENING_TIMES).forEach(function (k) { if (isHM(f[k])) d.times[k] = f[k]; });
+  (scr === 'Morning' ? MORNING_SCORES : EVENING_SCORES).forEach(function (s) { d.scores[s.key] = scoreOf(f[s.key]); });
+  if (scr === 'Morning') {
+    if (typeof f['Phone before bed'] === 'string') d.phone = f['Phone before bed'];
+    if (typeof f['Sleep in own words'] === 'string') d.words = f['Sleep in own words'];
+  } else {
+    d.notable = f['Day notable'] === 'Yes';
+    if (typeof f['Day notable why'] === 'string') d.why = f['Day notable why'];
+  }
+  return d;
+}
 // The calendar date of an entry: its own, or worked out from its Log day and Time (before 5:00 AM
 // the calendar date is the day after the Log day, R75) for an entry without one (Agent W, N3).
 function dayAfter(s) { var p = parts(s); return dateStr(new Date(p.y, p.m - 1, p.d + 1, 12)); }
@@ -1220,8 +1271,21 @@ function fixExtra(kind) {
   if (USUALS[kind].some(function (u) { return u.name === name; })) return null;
   return { name: name, contents: typeof fx.orig[kind + ' contents'] === 'string' ? fx.orig[kind + ' contents'] : '' };
 }
+// Every key fieldsMorning() and fieldsEvening() can write (021).
+var MADE_BY_MORNING = ['Log day', 'Time', 'Screen'].concat(MORNING_TIMES, MORNING_SCORES.map(function (s) { return s.key; }),
+                      ['Phone before bed', 'Sleep in own words', 'Calendar date', 'UTC offset', 'Saved at']);
+var MADE_BY_EVENING = ['Log day', 'Time', 'Screen'].concat(EVENING_SCORES.map(function (s) { return s.key; }), EVENING_TIMES,
+                      ['Day notable', 'Day notable why', 'Calendar date', 'UTC offset', 'Saved at']);
 // The fields of the changed version.
 function fixFields(fx, now) {
+  var scr = fixScreenOf(fx);
+  if (scr !== 'Intraday') {
+    var g = fieldsOf(scr, fx.dr, now), og = fx.orig, made = scr === 'Morning' ? MADE_BY_MORNING : MADE_BY_EVENING;
+    var odg = calDateOf(og);
+    if (fx.dr.fixed.date === odg && fx.dr.fixed.time === og['Time'] && og['UTC offset'] !== undefined) g['UTC offset'] = og['UTC offset'];
+    Object.keys(og).forEach(function (k) { if (made.indexOf(k) < 0 && g[k] === undefined) g[k] = og[k]; });
+    return g;
+  }
   var f = fieldsFor(fx.dr, now), o = fx.orig;
   // A shake or medicine kept as recorded keeps what was recorded with it (G40).
   USUAL_KINDS.forEach(function (kind) {
@@ -1234,7 +1298,16 @@ function fixFields(fx, now) {
   var od = calDateOf(o);
   if (fx.dr.fixed.date === od && fx.dr.fixed.time === o['Time'] && o['UTC offset'] !== undefined) f['UTC offset'] = o['UTC offset'];
   Object.keys(o).forEach(function (k) { if (MADE_BY_SCREEN.indexOf(k) < 0 && f[k] === undefined) f[k] = o[k]; });
+  // A new end for an ended walk or workout (021, R95): a time, or not known; never taken off.
+  var ne = fx.dr.newEnd;
+  if (ne && o['Workout ended'] !== undefined && o['Workout'] !== undefined) f['Workout ended'] = ne.unknown ? END_NOT_KNOWN : ne.time;
   return f;
+}
+// The end of the walk or workout being changed as it now stands: the new end typed, or the saved one (021).
+function fixEndNow(fx) {
+  var ne = fx.dr.newEnd;
+  if (ne) return ne.unknown ? END_NOT_KNOWN : ne.time;
+  return fx.orig['Workout ended'];
 }
 // The green bar's line after Save changes: what the entry holds, a walk or workout with its times (Agent W, W5).
 function fixSummary(f, running) {
@@ -1294,23 +1367,23 @@ function openFix(id) {
     var top = newestOf(r.list);
     if (!top || top.state === 'undone' || state.fix || state.screen !== 'Intraday' || !!top.test !== !!state.test) return;
     var f = top.fields || {};
-    if ((f['Screen'] || 'Intraday') !== 'Intraday') {
-      showNote('Morning and Evening entries can be changed after the next update.');
-      return;
-    }
+    var scr = f['Screen'] === 'Morning' || f['Screen'] === 'Evening' ? f['Screen'] : 'Intraday';     // 021
     if (!isHM(f['Time']) || !(isDay(f['Calendar date']) || isDay(f['Log day']))) {
       showError('This entry’s time could not be read, so it can’t be changed on the phone. Tell Claude.');
       return;
     }
-    if (f['Workout'] !== undefined && state.unread.running) {
+    if (scr === 'Intraday' && f['Workout'] !== undefined && state.unread.running) {
       showError('This phone could not read whether a walk or workout is running, so this one can’t be changed just now. ' +
                 'Close the page and open it again.');
       return;
     }
     if (draftTimer) storeDraft(true);                 // the half-filled new entry is kept as it is
     state.interacted = true;                          // a new page version waits until he leaves (Agent W, N5)
-    state.fix = { id: id, base: top.version, test: !!top.test, orig: clone(f), dr: fixDraftFrom(f), opened: DL.stampNow() };
+    state.fix = { id: id, base: top.version, test: !!top.test, orig: clone(f), screen: scr,
+                  dr: scr === 'Intraday' ? fixDraftFrom(f) : fixScreenDraftFrom(f, scr), opened: DL.stampNow() };
+    if (scr !== 'Intraday') state.screen = scr;       // the entry opens on its own screen (R88; 021)
     state.fixConfirm = null;
+    state.fixLongOk = null;
     state.edits[KEY_FIX] = (state.edits[KEY_FIX] || 0) + 1;
     closePad();
     closeTpad();
@@ -1325,13 +1398,22 @@ function openFix(id) {
   });
 }
 
+// The red lines about the entry being changed go once they no longer apply: after Cancel or Save changes,
+// and after Edit or a new end changes the time they were about (021-3; Agent X's recheck).
+var FIX_LINE = /^(This makes the (walk|workout) more than |This time puts the entry on |The (walk|workout) ended at |With this start, the end at |An entry can’t be left with nothing in it)/;
+function clearFixLine() {
+  var e = el('error');
+  if (!e.hidden && FIX_LINE.test(e.textContent)) { e.hidden = true; specificShown = ''; showUnread(false); }
+}
 // Leaves the change without saving it; also used when nothing was changed.
 function cancelFix(note) {
   if (!state.fix) return;
   armedId = null;
   closePad();
   closeTpad();
+  if (fixScreenOf(state.fix) !== 'Intraday' && state.screen === fixScreenOf(state.fix)) state.screen = 'Intraday';   // G021-1
   state.fix = null;
+  clearFixLine();
   state.fixConfirm = null;
   state.edits[KEY_FIX] = (state.edits[KEY_FIX] || 0) + 1;
   storeDraft(true);
@@ -1345,6 +1427,13 @@ function cancelFix(note) {
 function saveFix() {
   var fx = state.fix;
   if (state.reading || !fx) return;
+  var scr = fixScreenOf(fx);
+  if (padShowing('tpad') && el('tpadinput').value.trim() !== '') {         // a time typed and not yet set (021)
+    el('tpadmsg').textContent = 'Tap AM or PM to set this time first, or Cancel.';
+    el('tpadmsg').className = 'padmsg bad';
+    try { el('tpad').scrollIntoView({ block: 'center' }); } catch (x) { /* ignore */ }
+    return;
+  }
   if (padShowing('pad') && el('padinput').value.trim() !== '') {
     el('padmsg').textContent = 'Tap AM or PM to change the time first, or Cancel.';
     el('padmsg').className = 'padmsg bad';
@@ -1352,17 +1441,17 @@ function saveFix() {
     return;
   }
   var dr = fx.dr;
-  if (dr.liquids && !liquidsPicked(dr)) {
+  if (scr === 'Intraday' && dr.liquids && !liquidsPicked(dr)) {
     showNote('Pick Coffee, Water or Something else, or tap Liquids again to take it off.');
     return;
   }
-  var walk = fx.orig['Workout'] !== undefined;
+  var walk = scr === 'Intraday' && fx.orig['Workout'] !== undefined;
   if (walk && state.unread.running) {
     showError('This phone could not read whether a walk or workout is running, so this one can’t be changed just now. ' +
               'Close the page and open it again.');
     return;
   }
-  if (!hasContent(dr, true)) {
+  if (scr === 'Intraday' ? !hasContent(dr, true) : !contentOf(scr, dr)) {
     showError('An entry can’t be left with nothing in it. Put something back, or tap Cancel to leave it as it was.');
     return;
   }
@@ -1370,11 +1459,40 @@ function saveFix() {
   var fields = fixFields(fx, now);
   if (sameFields(fields, fx.orig)) { cancelFix('Nothing was changed, so nothing was saved.'); return; }
   var startAt = dr.fixed.at || momentOf(dr.fixed.date, dr.fixed.time).getTime();
-  var endAt = walk ? endAtOf(fx.orig) : null;
+  // The end as it now stands: a new end typed (021) at the moment worked out when it was typed, else the saved one.
+  var ne = walk ? dr.newEnd : null;
+  var endAt = walk ? (ne ? (ne.unknown ? null : ne.at) : endAtOf(fx.orig)) : null;
+  var endShown = walk ? fixEndNow(fx) : null;
   if (endAt !== null && startAt > endAt) {
-    showError('The ' + (fx.orig['Workout'] === 'Walk' ? 'walk' : 'workout') + ' ended at ' + ampm(fx.orig['Workout ended']) +
-              ', so its start can’t be later than that. Change the time with Edit, or tap Cancel.');
+    showError('The ' + (fx.orig['Workout'] === 'Walk' ? 'walk' : 'workout') + ' ended at ' + ampm(endShown) +
+              ', so its start can’t be later than that. Change the time with Edit' + (ne ? ' or the end' : '') + ', or tap Cancel.');
     return;
+  }
+  // The sheet keeps only the end's clock time, read as the first such time after the start; a start moved
+  // by Edit after a new end was typed must still give that same end (021).
+  if (ne && !ne.unknown && endAtOf({ 'Workout ended': ne.time, 'Time': dr.fixed.time, 'Calendar date': dr.fixed.date }) !== ne.at) {
+    showError('With this start, the end at ' + ampm(ne.time) + ' would fall on another day. Change the start with Edit or type the end again, or tap Cancel.');
+    return;
+  }
+  // Longer than 12 hours because the start or the end was changed: asked once more, as when an end is typed (021-2; Agent X, X1).
+  // Not when its length is unchanged, nor for a typed end already asked about with this same start.
+  if (endAt !== null) {
+    var startMin = Math.floor(startAt / 60000) * 60000;
+    var lenMin = Math.round((endAt - startMin) / 60000);
+    var o0 = fx.orig, oEnd = endAtOf(o0);
+    var oLen = oEnd !== null && isHM(o0['Time']) ? Math.round((oEnd - momentOf(calDateOf(o0), o0['Time']).getTime()) / 60000) : null;
+    var askedTyped = !!(ne && !ne.unknown && ne.from === startAt && state.longOkEnd === fx.id + '|' + ne.time + '|' + ne.from);
+    var lk = fx.id + '|' + startAt + '|' + endAt;
+    if (lenMin > LONG_HOURS * 60 && lenMin !== oLen && !askedTyped && state.fixLongOk !== lk) {
+      state.fixLongOk = lk;
+      var wk = fx.orig['Workout'] === 'Walk' ? 'walk' : 'workout';
+      var ed = new Date(endAt);
+      showError('This makes the ' + wk + ' more than ' + LONG_HOURS + ' hours long (' + whenOf(dr.fixed.date, dr.fixed.time, dateStr(new Date())) +
+                ' to ' + whenOf(dateStr(ed), timeStr(ed), dr.fixed.date) + '). Tap Save changes again to keep it, or change the time with Edit' +
+                (ne ? ' or the end' : '') + ', or tap Cancel.');
+      specificShown = el('error').textContent;
+      return;
+    }
   }
   // Moved to another day: asked once more, since there is no Undo and earlier days can't be opened yet (G019-5).
   if (fields['Log day'] !== fx.orig['Log day']) {
@@ -1409,14 +1527,17 @@ function saveFix() {
   var out = { key: entry.key, seq: entry.seq, status: 'waiting', payload: pl };
   // The green bar says the changes were saved, with no Undo (R90, G019-7). Its id is null and its
   // until already past, so an earlier page put back by the way back neither shows it nor undoes anything (019-2).
-  var bar = { id: null, fixId: fx.id, fix: true, date: dr.fixed.date, time: dr.fixed.time, summary: fixSummary(fields, isRun), undone: false,
-              test: fx.test, screen: 'Intraday', savedDate: dateStr(now), savedTime: timeStr(now),
+  var bar = { id: null, fixId: fx.id, fix: true, date: dr.fixed.date, time: dr.fixed.time,
+              summary: scr === 'Intraday' ? fixSummary(fields, isRun) : summary(fields), undone: false,
+              test: fx.test, screen: scr, savedDate: dateStr(now), savedTime: timeStr(now),
               until: now.getTime(), fixUntil: nextDayStart(now).getTime(), started: false, ended: null };
   if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
   var gen0 = { running: state.gen.running, fix: state.gen[KEY_FIX] };
   var ed0 = state.edits[KEY_FIX] || 0;
   var saved = fx, runBefore = run;
+  var screenBefore = state.screen;
   state.fix = null;                                  // the screen goes back at once, as after Save
+  if (scr !== 'Intraday') state.screen = 'Intraday';  // back to today's list (G021-1)
   state.running = newRunning;
   closePad();
   closeTpad();
@@ -1443,7 +1564,7 @@ function saveFix() {
   }).then(function (res) {
     if (res.refused) {
       if (state.gen.running === gen0.running) state.running = runBefore;
-      if (state.gen[KEY_FIX] === gen0.fix && !state.fix) state.fix = saved;
+      if (state.gen[KEY_FIX] === gen0.fix && !state.fix) { state.fix = saved; if (state.screen === 'Intraday') state.screen = screenBefore; }
       if (res.unreadable) { render(); showError(NOT_READ_FIX); specificShown = el('error').textContent; return; }
       if (res.why === 'fix-changed') {
         afterGuarded(res, 'none');
@@ -1477,7 +1598,7 @@ function saveFix() {
     if (taken.length) showOtherLine('other');
   }, function () {
     state.running = runBefore;
-    if (!state.fix) state.fix = saved;
+    if (!state.fix) { state.fix = saved; if (state.screen === 'Intraday') state.screen = screenBefore; }
     storeDraft(true);
     render();
     showError('Could not save the changes on this phone: its storage refused. They are back on the screen; try Save changes again.');
@@ -2042,13 +2163,22 @@ function render() {
   el('testbar').hidden = !state.test;
   renderHeads();
   SCREENS.forEach(function (s) { el('sc-' + s).hidden = s !== screen; });
-  var fixing = !!state.fix && screen === 'Intraday';
-  el('else').hidden = screen !== 'Intraday' || fixing;     // today's list: Intraday only (018, G018-1); hidden while changing an entry (G019-1)
+  var fixing = fixOn(screen);
+  el('else').hidden = screen !== 'Intraday' || !!state.fix;     // today's list: Intraday only (018, G018-1); hidden while changing an entry (G019-1, G021-2)
   el('fixbanner').hidden = !fixing;
+  var fo = state.fix ? state.fix.orig : null;
+  var fwhen = fo && isHM(fo['Time']) ? whenOf(calDateOf(fo), fo['Time'], dateStr(new Date())) : '';
   if (fixing) {
-    var fo = state.fix.orig;
-    var fd = calDateOf(fo);
-    el('fixtitle').textContent = 'Changing your entry of ' + (isHM(fo['Time']) ? whenOf(fd, fo['Time'], dateStr(new Date())) : '');
+    var fs = fixScreenOf(state.fix);
+    el('fixtitle').textContent = 'Changing your ' + (fs === 'Intraday' ? '' : fs + ' ') + 'entry of ' + fwhen;
+  }
+  // A Morning or Evening entry being changed while he is on Intraday: a line in place of today's list (G021-2).
+  var away = !!state.fix && screen === 'Intraday' && !fixing;
+  el('fixaway').hidden = !away;
+  if (away) {
+    var fa = fixScreenOf(state.fix);
+    el('fixaway').textContent = 'You are changing your ' + fa + ' entry of ' + fwhen + '. Tap ' + fa +
+                                ' at the top to save the changes or cancel them. Today’s list comes back after that.';
   }
   document.body.classList.toggle('fixing', fixing);          // pale yellow while changing (020, R93)
   el('save').textContent = fixing ? 'Save changes to ' + (isHM(state.fix.orig['Time']) ? ampm(state.fix.orig['Time']) + ' ' : '') + 'entry' : 'Save';
@@ -2095,7 +2225,8 @@ function render() {
   renderMorning();
   renderEvening();
   // The time pad goes when its screen is left or its End box is gone (Agent Q, round 2).
-  if (!el('tpad').hidden && (!state.tpadFor || state.tpadFor.screen !== screen || (state.tpadFor.end && !endBoxOn(screen)))) closeTpad();
+  if (!el('tpad').hidden && (!state.tpadFor || state.tpadFor.screen !== screen || (state.tpadFor.end && !endBoxOn(screen)) ||
+                              (state.tpadFor.fixEnd && !fixOn(screen)))) closeTpad();
 
   refreshStatus();
 }
@@ -2146,7 +2277,7 @@ function renderIntraday() {
   var stale = isStale();
   var tw = el('t-Workout');
   // While an entry is being changed (019) the tile shows that entry's walk or workout, if it has one.
-  var runShown = state.running && !state.fix ? state.running : null;
+  var runShown = state.running && !fixOn('Intraday') ? state.running : null;
   el('lbl-Workout').textContent = runShown ? endLabel() : 'Workout';
   var won = runShown ? (dr.endTick || (stale && endAnswered(dr))) : !!dr.workout;
   tw.classList.toggle('on', won);
@@ -2159,16 +2290,18 @@ function renderIntraday() {
     c.setAttribute('aria-pressed', on ? 'true' : 'false');
   });
   var rl = el('running');
-  if (state.fix) {
+  var fe = el('fixend'), feOn = false;
+  if (fixOn('Intraday')) {
     var o = state.fix.orig, w = o['Workout'] === 'Walk' ? 'walk' : 'workout';
     rl.hidden = o['Workout'] === undefined;
     if (o['Workout'] === undefined) rl.textContent = '';
     else if (state.running && state.running.id === state.fix.id) {
       rl.textContent = 'This ' + w + ' is still running. Its start is the time at the top. End it after you save or cancel.';
-    } else if (o['Workout ended'] === END_NOT_KNOWN) {
-      rl.textContent = 'This ' + w + ' ended at a time not known. Its start is the time at the top; changing its end comes with the next update.';
     } else if (o['Workout ended'] !== undefined) {
-      rl.textContent = 'This ' + w + ' ended at ' + listTime(o['Workout ended']) + '. Its start is the time at the top; changing its end comes with the next update.';
+      // Its end can be changed here (021, R95).
+      rl.textContent = 'This ' + w + ' started at the time at the top. Tap its end time below to change it.';
+      feOn = true;
+      renderFixEnd(state.fix, w);
     } else {
       rl.textContent = 'Its start is the time at the top.';
     }
@@ -2185,6 +2318,7 @@ function renderIntraday() {
   } else {
     rl.hidden = true;
   }
+  fe.hidden = !feOn;
   // Liquids and Food (increment 009)
   var lq = dr.liquids;
   el('t-Liquids').classList.toggle('on', !!lq);
@@ -2216,7 +2350,7 @@ function setTimeButton(btn, hhmm) {
 }
 
 function renderMorning() {
-  var dr = state.mdraft;
+  var dr = draftOf('Morning');
   MORNING_TIMES.forEach(function (k) { setTimeButton(document.querySelector('.tset[data-s="Morning"][data-k="' + k + '"]'), dr.times[k]); });
   Array.prototype.forEach.call(document.querySelectorAll('#phone .ynb'), function (b) {
     var on = dr.phone === b.getAttribute('data-v');
@@ -2227,12 +2361,28 @@ function renderMorning() {
 }
 
 function renderEvening() {
-  var dr = state.edraft;
+  var dr = draftOf('Evening');
   EVENING_TIMES.forEach(function (k) { setTimeButton(document.querySelector('.tset[data-s="Evening"][data-k="' + k + '"]'), dr.times[k]); });
   el('daynotable').checked = dr.notable;
   el('tk-daynotable').classList.toggle('on', dr.notable);
   el('daywhywrap').hidden = !dr.notable;
   if (el('daywhy').value !== dr.why) el('daywhy').value = dr.why;
+}
+
+// The end of an ended walk or workout being changed (021, R95): its time (tap to change) and Don't know.
+function renderFixEnd(fx, w) {
+  var end = fixEndNow(fx), ne = fx.dr.newEnd;
+  var b = el('fixendset');
+  if (end === END_NOT_KNOWN) { b.textContent = 'not known'; b.classList.add('set'); }
+  else setTimeButton(b, isHM(end) ? end : null);
+  if (ne && !ne.unknown && ne.date && ne.date !== fx.dr.fixed.date) b.textContent = weekday(ne.date) + ' ' + usDate(ne.date) + ' ' + ampm(ne.time);
+  var dk = el('fixendunknown');
+  dk.classList.toggle('on', end === END_NOT_KNOWN);
+  dk.setAttribute('aria-pressed', end === END_NOT_KNOWN ? 'true' : 'false');
+  var was = fx.orig['Workout ended'];
+  el('fixendnote').textContent = ne && end !== was
+    ? 'Changed from ' + (was === END_NOT_KNOWN ? 'not known' : listTime(was)) + '. Saved when you tap Save changes.'
+    : 'The ' + w + '’s end can be changed, not taken off.';
 }
 
 // The box about a walk or workout still running (R69, R80, D76)
@@ -2353,7 +2503,7 @@ function buildButtons() {
     var t = document.createElement('span'); t.className = 'cn'; t.textContent = k; b.appendChild(t);
     var c = document.createElement('span'); c.className = 'chk'; c.textContent = '✓'; b.appendChild(c);
     b.addEventListener('click', function () {
-      if (state.fix && !idr().workout) return;
+      if (fixOn('Intraday') && !idr().workout) return;
       touch();
       if (!idr().workout) idr().workout = { kind: null };
       idr().workout.kind = k;
@@ -2364,7 +2514,7 @@ function buildButtons() {
     el('c-Workout').appendChild(b);
   });
   el('t-Workout').addEventListener('click', function () {
-    if (state.fix) {                // a walk or workout can't be added or taken off a saved entry (019, G019-4)
+    if (fixOn('Intraday')) {        // a walk or workout can't be added or taken off a saved entry (019, G019-4)
       showNote(idr().workout ? 'A walk or workout can’t be taken off a saved entry. You can change its kind.'
                              : 'A walk or workout can’t be added to a saved entry. Tap Cancel, then start it as a new entry.');
       return;
@@ -2528,7 +2678,8 @@ function buildMorningEvening() {
     b.addEventListener('click', function () {
       touch();
       var v = b.getAttribute('data-v');
-      state.mdraft.phone = state.mdraft.phone === v ? null : v;      // tap again clears
+      var md = draftOf('Morning');
+      md.phone = md.phone === v ? null : v;      // tap again clears
       settle();
       storeDraft(true);
       render();
@@ -2537,7 +2688,7 @@ function buildMorningEvening() {
   el('sleepwords').setAttribute('maxlength', String(WORDS_MAX));
   el('sleepwords').addEventListener('input', function () {
     touch();
-    state.mdraft.words = el('sleepwords').value;
+    draftOf('Morning').words = el('sleepwords').value;
     limitNote('sleepwords', WORDS_MAX, 'Sleep in your own words');
     settle();
     storeDraft(false);
@@ -2545,21 +2696,35 @@ function buildMorningEvening() {
   el('daywhy').setAttribute('maxlength', String(WHY_MAX));
   el('daynotable').addEventListener('change', function () {
     touch();
-    state.edraft.notable = el('daynotable').checked;
+    draftOf('Evening').notable = el('daynotable').checked;
     settle();
     storeDraft(true);
     render();
-    if (state.edraft.notable) el('daywhy').focus();
+    if (draftOf('Evening').notable) el('daywhy').focus();
   });
   el('daywhy').addEventListener('input', function () {
     touch();
-    state.edraft.why = el('daywhy').value;
+    draftOf('Evening').why = el('daywhy').value;
     limitNote('daywhy', WHY_MAX, 'The Why line');
     settle();
     storeDraft(false);
   });
   el('endset').addEventListener('click', function () {
     openTpad({ screen: state.screen, end: true }, el('endrow'));
+  });
+  // The end of the walk or workout being changed (021, R95).
+  el('fixendset').addEventListener('click', function () {
+    if (!fixOn('Intraday') || state.screen !== 'Intraday') return;
+    openTpad({ screen: 'Intraday', fixEnd: true }, el('fixendrow'));
+  });
+  el('fixendunknown').addEventListener('click', function () {
+    if (!fixOn('Intraday') || state.screen !== 'Intraday') return;
+    state.interacted = true;
+    state.fix.dr.newEnd = { unknown: true };        // sets "not known"; a time is given again by typing it (G021-4)
+    clearFixLine();                                   // 021-3
+    closeTpad();
+    storeDraft(true);
+    render();
   });
   el('endunknown').addEventListener('click', function () {
     var r = state.running;
@@ -2583,10 +2748,10 @@ function openTpad(target, row) {
   row.parentNode.insertBefore(p, row.nextSibling);
   p.hidden = false;
   state.longOk = null;
-  el('tpadlabel').textContent = target.end ? 'Ended at' : target.key;
+  el('tpadlabel').textContent = target.end || target.fixEnd ? 'Ended at' : target.key;
   el('tpadinput').value = '';
   var dr = draftOf(target.screen);
-  var has = target.end ? endAnswered(dr) && !!dr.endAns.time : !!dr.times[target.key];
+  var has = target.fixEnd ? false : target.end ? endAnswered(dr) && !!dr.endAns.time : !!dr.times[target.key];   // no Clear for a changed end (R95)
   el('tpadclear').hidden = !has;
   el('tpadmsg').textContent = 'Type the time, like 1130 or 645, then tap AM or PM.';
   el('tpadmsg').className = 'padmsg';
@@ -2612,7 +2777,35 @@ function setFromTpad(half) {
   }
   var hhmm = four.slice(0, 2) + ':' + four.slice(2);
   var dr = cur();
-  if (t.end) {
+  if (t.fixEnd) {
+    // A new end for the ended walk or workout being changed (021, R95), worked out from its start as it now stands.
+    var fx = state.fix;
+    if (!fixOn('Intraday') || !fx || fx.orig['Workout ended'] === undefined) { closeTpad(); render(); return; }
+    var kind = fx.orig['Workout'];
+    var pr = { kind: kind, startAt: dr.fixed.at || momentOf(dr.fixed.date, dr.fixed.time).getTime(),
+               startDate: dr.fixed.date, startTime: dr.fixed.time };
+    var fm = endMoment(pr, hhmm, new Date());
+    if (!fm.ok) {
+      el('tpadmsg').textContent = fm.msg;
+      el('tpadmsg').className = 'padmsg bad';
+      return;
+    }
+    var fh = (fm.at - Math.floor(pr.startAt / 60000) * 60000) / 3600000;
+    var fk = fx.id + '|' + hhmm;
+    if (fh > LONG_HOURS && state.longOk !== fk) {
+      state.longOk = fk;
+      el('tpadmsg').textContent = 'That makes the ' + (kind === 'Walk' ? 'walk' : 'workout') + ' more than ' + LONG_HOURS +
+        ' hours long (' + whenOf(pr.startDate, pr.startTime, dateStr(new Date())) + ' to ' + whenOf(fm.date, hhmm, pr.startDate) +
+        '). Tap ' + half + ' again to keep it, or type a different time.';
+      el('tpadmsg').className = 'padmsg bad';
+      return;
+    }
+    state.longOkEnd = fh > LONG_HOURS ? fx.id + '|' + hhmm + '|' + pr.startAt : null;   // asked at the pad (021-2)
+    state.longOk = null;
+    state.interacted = true;
+    dr.newEnd = { unknown: false, time: hhmm, at: fm.at, date: fm.date, from: pr.startAt };
+    clearFixLine();                                   // 021-3
+  } else if (t.end) {
     var r = state.running;
     if (!r) { closeTpad(); render(); return; }
     var em = endMoment(r, hhmm, new Date());
@@ -2649,6 +2842,7 @@ function clearFromTpad() {
   var t = state.tpadFor;
   if (!t || t.screen !== state.screen) { closeTpad(); return; }
   var dr = cur();
+  if (t.fixEnd) { closeTpad(); render(); return; }          // an end is never taken off (R95)
   if (t.end) dr.endAns = null; else dr.times[t.key] = null;
   settle();
   storeDraft(true);
@@ -2704,10 +2898,9 @@ function setFromPad(half) {
   dr.fixed = got;
   dr.edited = true;
   // The "another day" question is about the time asked; a new time asks again if needed (020-2; Agent W, W3).
-  if (state.fix && state.screen === 'Intraday' && state.fixConfirm) {
+  if (fixOn(state.screen)) {
     state.fixConfirm = null;
-    var e = el('error');
-    if (!e.hidden && /^This time puts the entry on /.test(e.textContent)) { e.hidden = true; specificShown = ''; }
+    clearFixLine();                                   // asked again at Save changes if it still applies (021-3)
   }
   storeDraft(true);
   closePad();
@@ -2735,7 +2928,7 @@ function wire() {
     var t = e.target;
     if (t && t.closest && t.closest('main')) { e.stopImmediatePropagation(); e.preventDefault(); }
   }, true);
-  el('save').addEventListener('click', function () { if (state.fix && state.screen === 'Intraday') saveFix(); else save(); });
+  el('save').addEventListener('click', function () { if (fixOn(state.screen)) saveFix(); else save(); });
   el('cancelfix').addEventListener('click', function () { cancelFix(''); });
   // Tapping an entry in today's list opens it to change (019, R88).
   // From 020 a tap only shows "Change this entry" under the entry; that button opens it (R92).
@@ -2748,12 +2941,6 @@ function wire() {
     if (t.closest('.chgbtn')) {
       if (Date.now() - armedAt < ARMED_MS) return;             // the button only just appeared under his finger (020-2)
       armedId = null; openFix(id); return;
-    }
-    if (row.getAttribute('data-screen') !== 'Intraday') {        // Morning and Evening: the note, no button (G019-3)
-      armedId = null;
-      refreshList();
-      showNote('Morning and Evening entries can be changed after the next update.');
-      return;
     }
     armedId = armedId === id ? null : id;
     armedAt = Date.now();

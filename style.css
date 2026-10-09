@@ -168,3 +168,8 @@ h3 { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.06em; color
 body.fixing, body.fixing header { background: #fbf0c4; }           /* pale yellow while an entry is being changed */
 .chgbtn { display: block; width: 100%; margin-top: 8px; border: 1px solid var(--accent); background: var(--accent); color: #fff; border-radius: 10px; padding: 9px 10px; font-weight: 700; font-size: 15px; text-align: center; }
 .entry.armed { background: var(--accent-soft); }
+
+/* Changing Morning and Evening entries and a walk's end (increment 021) */
+.fixend { margin: 8px 12px 0; padding: 8px 10px; border-radius: 10px; background: #fff; border: 1px solid var(--line); }
+.fixend .tbox.inq { margin: 0 0 8px; }
+.fixaway { margin: 12px 12px 0; padding: 10px 12px; border-radius: 12px; background: var(--accent-soft); border: 2px solid var(--accent); font-size: 14.5px; color: var(--ink); }
