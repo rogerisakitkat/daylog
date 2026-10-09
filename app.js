@@ -24,8 +24,32 @@
  * 015-3: Undo keeps the End walk tick too, the red line says which screen holds
  * an end that cannot be saved yet, and stops naming the green bar once a Save
  * has replaced it (Agent N's recheck).
+ * 016 (2026-10-08): the page open twice on the phone (Q40, D116, D119). The page
+ * remembers what it last read or wrote of the five things it changes (the three
+ * half-filled screens, the walk running, the green bar), compares them inside the
+ * same storage step before writing, and never writes over one that another open
+ * copy changed: it takes the stored one and says so. It also takes them again
+ * when it comes back to the front or another copy says it wrote. A damaged stored
+ * value is treated as one that could not be read (Agent N, note 7).
+ * 016-2 (Agent P): storage steps start at once again, as on 015-3, and the screens
+ * are copied when their write is asked for; the page compares with what it wrote
+ * itself, so its own writes are never taken for another copy's (a Save right after
+ * typing could be lost on 016-1); a comparison read that fails writes nothing; a red
+ * line saying what to do is not replaced by the general one, and says what changed;
+ * Undo undoes only the green bar it was tapped on; odd usual-one picks are put right
+ * as since 013, not treated as damaged.
+ * 016-3 (Agent P's recheck): an Undo stopped because the other copy's green bar was
+ * taken in meanwhile says "Not undone"; a working Undo takes away a "Not undone" line;
+ * when the page is closed, his changes not yet stored are written at once, as on 015-3.
+ * 016-4: at closing, only screens holding a tap or typing of his not yet stored are
+ * written that way, not ones the page only put right by itself (Agent P, W-d).
+ * 016-5 (Agent T): when the page goes to the back, his changes not yet stored are
+ * written at once as at closing, before the comparing write, so they are not lost if
+ * the page is stopped in the moment the comparing read takes; the lines after a Save
+ * that was not made say to enter again anything missing (the screen may show the
+ * other copy's version).
  */
-var PAGE_VERSION = '015-3';
+var PAGE_VERSION = '016-5';
 var SCREENS = ['Morning', 'Intraday', 'Evening'];
 var SCORE_ROWS = ['Mind', 'Body', 'Balance'];
 var MORNING_SCORES = [{ label: 'Quality', key: 'Sleep quality' }, { label: 'Amount', key: 'Sleep amount' }];
@@ -83,8 +107,14 @@ var state = {
   tpadFor: null,
   usualsFrom: null,               // once read: 'phone', 'none', 'unreadable' or 'not read' (013)
   reading: true,                  // the opening read of the phone's storage has not finished
-  unread: {}                      // things kept on the phone that could not be read at opening (015):
+  unread: {},                     // things kept on the phone that could not be read at opening (015):
                                   // never written over or deleted while the page is open
+  known: {},                      // what this page last read or wrote of each of GUARDED, as fp() (016)
+  gen: {},                        // how often each of GUARDED was taken in from storage (016-2)
+  closeWrite: {},                 // screens written at closing without comparing, not yet known done (016-3)
+  edits: {},                      // his taps and typing on each screen, counted (016-4)
+  storedEdits: {},                // how many of those the stored screen holds
+  noStorage: false                // the phone's storage could not be opened at all when the page opened
 };
 
 // ------------------------------------------------------------------ dates and times
@@ -265,17 +295,306 @@ function storeDraft(now) {
   var write = function () {
     draftTimer = null;
     // A stored screen that could not be read at opening is left as it is (015).
-    var w = SCREENS.filter(function (screen) { return !state.unread[draftKey(screen)]; })
-                   .map(function (screen) { return [draftKey(screen), clone(draftOf(screen))]; });
+    // The screens are copied now, when the write is asked for, as on 015-3 (016-2; Agent P, F1).
+    var w = SCREENS.filter(function (screen) { return !state.unread[draftKey(screen)]; }).map(function (screen) {
+      var k = draftKey(screen);
+      return { k: k, v: clone(draftOf(screen)), gen: state.gen[k], known: state.known[k], ed: state.edits[k] || 0 };
+    });
     if (!w.length) return Promise.resolve();
-    return DL.run(['kv'], 'readwrite', function (s) {
-      w.forEach(function (x) { s.kv.put(x[1], x[0]); });
+    var lostMine = false;
+    return guarded(['kv'], function (s, got, missed) {
+      var wrote = {};
+      w.forEach(function (x) {
+        // Not written: taken from another open copy since it was copied, changed there
+        // since this page last saw it, or not readable just now (016).
+        if (state.gen[x.k] !== x.gen || !unchanged(x.k, got, missed)) {
+          if (fp(x.k, x.v) !== x.known) lostMine = true;      // it held a change of his not yet stored
+          return;
+        }
+        s.kv.put(x.v, x.k);
+        wrote[x.k] = x.v;
+      });
+      return { wrote: wrote };
+    }).then(function (res) {
+      w.forEach(function (x) { if (res.wrote && Object.prototype.hasOwnProperty.call(res.wrote, x.k)) state.storedEdits[x.k] = x.ed; });
+      afterGuarded(res, lostMine ? 'typed' : 'other');
     }).catch(function () { /* shown at Save */ });
   };
   if (now) return write();
   draftTimer = setTimeout(write, 300);
   return Promise.resolve();
 }
+
+// When the page is being closed, screens holding a change of his not yet stored are
+// written at once, without first reading what is stored, as on 015-3: waiting for the
+// reads can lose what he typed when the page goes at once (016-3; Agent P, W1, W-c).
+// The page being closed is the one at the front, which took in the other copy's
+// changes when it came there; another copy at the back does not write.
+function storeAtClose() {
+  if (!state.loaded) return;
+  if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
+  // Only screens holding a tap or typing of his not yet stored: a screen the page only put
+  // right by itself (an old usual one, an end answer dropped) is not written without
+  // comparing (016-4; Agent P, W-d).
+  var w = SCREENS.map(function (screen) { var k = draftKey(screen); return { k: k, v: clone(draftOf(screen)), ed: state.edits[k] || 0 }; })
+                 .filter(function (x) {
+                   return !state.unread[x.k] && x.ed !== (state.storedEdits[x.k] || 0) && fp(x.k, x.v) !== state.known[x.k];
+                 });
+  if (!w.length) return;
+  // Until this write is known to be done, finding it in storage is not taken for another copy's change.
+  w.forEach(function (x) { x.f = fp(x.k, x.v); state.closeWrite[x.k] = x.f; });
+  DL.run(['kv'], 'readwrite', function (s) { w.forEach(function (x) { s.kv.put(x.v, x.k); }); }).then(function () {
+    w.forEach(function (x) {
+      if (state.closeWrite[x.k] === x.f) { state.known[x.k] = x.f; delete state.closeWrite[x.k]; state.storedEdits[x.k] = x.ed; }
+    });
+    tellKept();
+  }, function () {
+    w.forEach(function (x) { if (state.closeWrite[x.k] === x.f) delete state.closeWrite[x.k]; });
+  });
+}
+// Whether a stored value is the one this page last read or wrote (or its own write at
+// closing, which then counts as known).
+function sameAsKnown(k, v) {
+  var f = fp(k, v);
+  if (f === state.known[k]) return true;
+  if (state.closeWrite[k] === f) { state.known[k] = f; delete state.closeWrite[k]; return true; }
+  return false;
+}
+
+// ------------------------------------------------------------------ the page open twice (016)
+
+// The five things the page changes in the phone's storage. Before writing any of
+// them it reads them all again in the same storage step and compares each with
+// what it last read or wrote (state.known); one that another open copy of the
+// page changed is never written over: the stored one is taken instead (Q40).
+var GUARDED = ['draft', 'draft-Morning', 'draft-Evening', 'running', 'lastSaved'];
+// What is compared: the value written out with its parts in a fixed order. A half-filled
+// screen is compared as the page would show it, so a screen never stored, an empty one
+// and one kept by an older page without the newer parts count the same when they hold
+// the same (another copy writing them back unchanged is not a change).
+function stable(v) {
+  if (v === undefined) return '-';
+  if (v === null || typeof v !== 'object') return JSON.stringify(v);
+  if (Array.isArray(v)) return '[' + v.map(function (x) { return x === undefined ? 'null' : stable(x); }).join(',') + ']';
+  return '{' + Object.keys(v).sort().filter(function (k) { return v[k] !== undefined; })
+                 .map(function (k) { return JSON.stringify(k) + ':' + stable(v[k]); }).join(',') + '}';
+}
+function fp(k, v) {
+  if (v !== undefined && !kindOk(k, v)) return 'damaged ' + stable(v);
+  if (k === 'draft') return stable(v && v.scores ? fillDraft(clone(v)) : emptyDraft());
+  if (k === 'draft-Morning') return stable(fillOther(v === undefined ? undefined : clone(v), emptyMorning()));
+  if (k === 'draft-Evening') return stable(fillOther(v === undefined ? undefined : clone(v), emptyEvening()));
+  return stable(v);
+}
+
+// The page's own storage steps start at once, as on 015-3 (016-2; Agent P, W1): the
+// phone's storage runs steps that touch the same things one after another, in the
+// order they were started, and each step's results are taken in (afterGuarded) before
+// the next one reads. state.gen counts, for each of the five, how often a stored value
+// was taken in (take), so a step worked out before that is not written over it.
+function queued(fn) {
+  try { return Promise.resolve(fn()); } catch (e) { return Promise.reject(e); }
+}
+
+// One storage step: first reads the five (except any that could not be read at
+// opening, which are never touched), then decide(stores, got, missed) queues the
+// writes and returns { wrote: { key: value written, or undefined for one deleted },
+// refused }. Resolves with that, got and missed, once everything in the step is
+// written. A read that fails here does not stop the step: that item is listed in
+// missed and cannot be compared, so it is not written (016-2), and a Save or Undo
+// that needs it writes nothing (a failure seen only in tests so far).
+function guarded(stores, decide, mode) {
+  return DL.db().then(function (d) {
+    return new Promise(function (resolve, reject) {
+      var t = d.transaction(stores, mode || 'readwrite');
+      var s = {};
+      stores.forEach(function (n) { s[n] = t.objectStore(n); });
+      var keys = GUARDED.filter(function (k) { return !state.unread[k]; });
+      var got = {}, missed = {}, left = keys.length, res = null, failed = null, started = false;
+      var go = function () {
+        if (started) return;
+        started = true;
+        try { res = decide(s, got, missed) || {}; res.got = got; res.missed = missed; if (!res.wrote) res.wrote = {}; }
+        catch (err) { failed = err; try { t.abort(); } catch (e) { /* already done */ } }
+      };
+      var one = function () { if (--left === 0) go(); };
+      keys.forEach(function (k) {
+        try {
+          var q = s.kv.get(k);
+          q.onsuccess = function () { try { got[k] = q.result; } catch (e) { missed[k] = true; } one(); };
+          q.onerror = function (e) { missed[k] = true; try { e.preventDefault(); e.stopPropagation(); } catch (x) { /* ignore */ } one(); };
+        } catch (e) { missed[k] = true; left--; }
+      });
+      if (left === 0) go();
+      // A step whose reads never all answered is treated as not readable (Agent P, note 8).
+      t.oncomplete = function () { resolve(res || { refused: true, unreadable: true, got: got, missed: missed, wrote: {} }); };
+      t.onerror = function () { reject(failed || t.error || new Error('storage error')); };
+      t.onabort = function () { reject(failed || t.error || new Error('storage aborted')); };
+    });
+  });
+}
+// The comparison for one item: true when it may be written, that is, unchanged since
+// this page last saw it, or not read at opening (never written, 015). One whose read
+// failed just now cannot be compared, so it is not written (016-2; Agent P, W2).
+function unchanged(k, got, missed) {
+  if (state.unread[k]) return true;
+  if (missed[k]) return false;
+  return sameAsKnown(k, got[k]);
+}
+function notReadable(keys, missed) { return keys.some(function (k) { return !state.unread[k] && missed[k]; }); }
+
+// After a storage step: what was written is now what this page knows; anything
+// else that another copy changed is taken (how: 'typed', 'save-walk', 'save-screen',
+// 'undo' or 'other', for the red line). Another open copy is told when something really changed.
+// Returns the keys taken.
+function afterGuarded(res, how) {
+  if (res.unreadable) return [];          // nothing was compared or written (016-2)
+  var wrote = res.wrote || {}, got = res.got || {};
+  var changed = false, taken = [];
+  Object.keys(wrote).forEach(function (k) {
+    if (fp(k, wrote[k]) !== fp(k, got[k])) changed = true;
+    state.known[k] = fp(k, wrote[k]);
+  });
+  Object.keys(got).forEach(function (k) {
+    if (Object.prototype.hasOwnProperty.call(wrote, k)) return;
+    if (!sameAsKnown(k, got[k])) taken.push(k);
+  });
+  if (changed) tellKept();
+  if (taken.length || res.refused) takeChanged(got, taken, how);
+  return taken;
+}
+
+// Takes the stored values of keys, then brings the screen and the red line up to
+// date (how 'none': the caller shows the line itself).
+function takeChanged(got, keys, how) {
+  keys.forEach(function (k) { take(k, got[k]); });
+  // The time pad stays open unless what it was for was taken (016-2; Agent P, note 3).
+  var t = state.tpadFor;
+  if (t && keys.some(function (k) { return k === draftKey(t.screen) || (t.end && k === 'running'); })) closeTpad();
+  tidyEnds();
+  render();
+  refreshDone();
+  if (how !== 'none') showOtherLine(how);
+}
+// The red line about another open copy, followed by the one about anything not read (015).
+// A line saying what to do (not saved, not undone, enter it again) is not replaced by the
+// general one while it shows (016-2; Agent P, W3).
+var specificShown = '';
+function showOtherLine(how) {
+  var e = el('error');
+  if (how === 'other' && specificShown && !e.hidden && e.textContent === specificShown) return;
+  var u = unreadText();
+  showError(otherText(how) + (u ? ' ' + u : ''));
+  specificShown = how === 'other' ? '' : e.textContent;
+  unreadShown = '';
+}
+
+var OTHER_OPEN = 'The day log is also open somewhere else on this phone, for example in a Chrome tab, ';
+var CLOSE_OTHER = 'To avoid this, close the other one and use only the home-screen icon.';
+var LATEST_SAVE = 'This page now shows the latest; check it. If what you entered is still on the screen, tap Save again; if any of it is missing, enter it again first. ';
+function otherText(how) {
+  if (how === 'save-walk') return 'Not saved. ' + OTHER_OPEN + 'and a walk or workout was started or ended there. ' + LATEST_SAVE + CLOSE_OTHER;
+  if (how === 'save-screen') return 'Not saved. ' + OTHER_OPEN + 'and this screen was saved or changed there. ' + LATEST_SAVE + CLOSE_OTHER;
+  if (how === 'undo') {
+    return 'Not undone. ' + OTHER_OPEN + 'and something was saved or undone there. ' +
+           'This page now shows the latest; check the green bar, and tap Undo again if it still needs undoing. ' + CLOSE_OTHER;
+  }
+  if (how === 'typed') {
+    return OTHER_OPEN + 'and something was changed there. This page now shows the latest; if something you just entered here is missing, enter it again. ' + CLOSE_OTHER;
+  }
+  return OTHER_OPEN + 'and something was changed there. This page now shows the latest. ' + CLOSE_OTHER;
+}
+// A comparison read that failed just now: nothing was written (016-2; Agent P, W2).
+var NOT_READ_SAVE = 'Not saved: this phone could not read its own storage just now, so nothing was saved, and the entry is back on the screen. ' +
+                    'Tap Save again; if this keeps happening, close the page and open it again, and tell Claude.';
+var NOT_READ_UNDO = 'Not undone: this phone could not read its own storage just now, so nothing was changed. ' +
+                    'Tap Undo again; if this keeps happening, close the page and open it again, and tell Claude.';
+
+// Puts a value read from storage in use (at opening, and when another open copy
+// changed it). A damaged value (a kind the page never writes) is treated like one
+// that could not be read (015): not used, never written over (Agent N, note 7).
+// Returns false for a damaged one.
+function take(k, v) {
+  if (v !== undefined && !kindOk(k, v)) {
+    state.unread[k] = true;
+    delete state.known[k];
+    state.gen[k] = (state.gen[k] || 0) + 1;
+    if (k === 'running') state.running = null;
+    else if (k === 'lastSaved') state.lastSaved = null;
+    else setDraftOf(k === 'draft' ? 'Intraday' : k.slice(6), emptyOf(k === 'draft' ? 'Intraday' : k.slice(6)));
+    return false;
+  }
+  state.known[k] = fp(k, v);              // before fillDraft changes v
+  state.gen[k] = (state.gen[k] || 0) + 1;
+  state.storedEdits[k] = state.edits[k] || 0;     // what he had on that screen is replaced by what is stored
+  if (k === 'running') state.running = v || null;
+  else if (k === 'lastSaved') state.lastSaved = v || null;
+  else if (k === 'draft') { state.draft = v ? fillDraft(v) : emptyDraft(); settleUsualPicks(state.draft); }
+  else if (k === 'draft-Morning') state.mdraft = fillOther(v, emptyMorning());
+  else if (k === 'draft-Evening') state.edraft = fillOther(v, emptyEvening());
+  return true;
+}
+
+function isObj(o) { return !!o && typeof o === 'object' && !Array.isArray(o); }
+function isDay(s) { return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s); }
+function isHM(s) { return typeof s === 'string' && /^\d{2}:\d{2}$/.test(s); }
+function isNum(n) { return typeof n === 'number' && isFinite(n); }
+function optStr(s) { return s === undefined || s === null || typeof s === 'string'; }
+function optBool(b) { return b === undefined || b === null || typeof b === 'boolean'; }
+function noneOr(v, ok) { return v === undefined || v === null || ok(v); }
+function scoresOk(o, keys) {
+  return isObj(o) && keys.every(function (k) { return noneOr(o[k], function (n) { return SCORE_VALUES.indexOf(n) >= 0; }); });
+}
+function timesOk(o, keys) { return isObj(o) && keys.every(function (k) { return noneOr(o[k], isHM); }); }
+function fixedOk(f) { return noneOr(f, function (x) { return isObj(x) && isDay(x.date) && isHM(x.time) && noneOr(x.at, isNum); }); }
+function endAnsOk(a) {
+  return noneOr(a, function (x) { return isObj(x) && optBool(x.unknown) && noneOr(x.time, isHM) && optStr(x.forId); });
+}
+function runningOk(r) {
+  return isObj(r) && typeof r.id === 'string' && isNum(r.version) && typeof r.kind === 'string' && isObj(r.fields) &&
+         isNum(r.startAt) && isDay(r.startDate) && isHM(r.startTime);
+}
+// The kinds of value the page writes (and pages since 003 wrote); anything else is damaged.
+// Parts already put right when read are not checked: Food, Other and Liquids (fillDraft),
+// and Shake and Medicine picks (settleUsualPicks, since 013: an odd pick shows as Something else).
+function kindOk(k, v) {
+  if (k === 'running') return runningOk(v);
+  if (k === 'lastSaved') {
+    return isObj(v) && isDay(v.date) && isHM(v.time) && typeof v.summary === 'string' && noneOr(v.until, isNum) &&
+           noneOr(v.savedDate, isDay) && noneOr(v.savedTime, isHM) && optStr(v.id) && optBool(v.undone) &&
+           noneOr(v.ended, function (e) { return isObj(e) && isNum(e.version) && runningOk(e.before); });
+  }
+  if (k === 'draft') {
+    return isObj(v) && scoresOk(v.scores, SCORE_ROWS) && fixedOk(v.fixed) && optStr(v.comments) && optStr(v.why) &&
+           optBool(v.notable) && optBool(v.personal) && optStr(v.liqWhat) &&
+           noneOr(v.workout, function (w) { return isObj(w) && optStr(w.kind); }) && optBool(v.endTick) && endAnsOk(v.endAns);
+  }
+  if (k === 'draft-Morning') {
+    return isObj(v) && timesOk(v.times, MORNING_TIMES) && scoresOk(v.scores, MORNING_SCORES.map(function (s) { return s.key; })) &&
+           fixedOk(v.fixed) && optStr(v.phone) && optStr(v.words);
+  }
+  if (k === 'draft-Evening') {
+    return isObj(v) && timesOk(v.times, EVENING_TIMES) && scoresOk(v.scores, EVENING_SCORES.map(function (s) { return s.key; })) &&
+           fixedOk(v.fixed) && optBool(v.notable) && optStr(v.why) && endAnsOk(v.endAns);
+  }
+  return true;
+}
+
+// Reads the five again and takes any that another open copy changed: when the
+// page comes back to the front, and when another copy says it wrote. A change of
+// this page's own still waiting to be written goes first, compared as always.
+function catchUp() {
+  if (!state.loaded || state.noStorage) return Promise.resolve();
+  if (draftTimer) return storeDraft(true);
+  return queued(function () {
+    if (!GUARDED.some(function (k) { return !state.unread[k]; })) return null;
+    return guarded(['kv'], function () { return { wrote: {} }; }, 'readonly')
+      .then(function (res) { afterGuarded(res, 'other'); });
+  }).catch(function () { /* read again next time */ });
+}
+
+var keptChannel = null;
+function tellKept() { try { if (keptChannel) keptChannel.postMessage('kept'); } catch (e) { /* not available */ } }
 
 // ------------------------------------------------------------------ a walk or workout still running
 
@@ -578,28 +897,66 @@ function save() {
               ended: endHow ? { id: run.id, version: endV.version, before: run } : null };
   if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
   var saved = dr, runBefore = run;
+  var dk = draftKey(screen);
+  // What this Save was worked out from (016): if the walk running or this screen was
+  // taken from another open copy since, or another copy changed them in storage,
+  // nothing is written. This page's own earlier writes are not a change (016-2; Agent P, F1).
+  var gen0 = { running: state.gen.running, screen: state.gen[dk] };
+  var ed0 = state.edits[dk] || 0;
   setDraftOf(screen, emptyOf(screen));
   state.running = newRunning;
   closeTpad();
   render();
-  DL.run(['entries', 'outbox', 'kv'], 'readwrite', function (s) {
-    if (entry) { s.entries.put(entry); s.outbox.put(out); }
-    if (endV) { s.entries.put(endV); s.outbox.put(endOut); }
-    // Anything that could not be read at opening is left as it is (015).
-    if (!state.unread.running) { if (newRunning) s.kv.put(newRunning, 'running'); else s.kv.delete('running'); }
-    s.kv.put(bar, 'lastSaved');
-    if (!state.unread[draftKey(screen)]) s.kv.delete(draftKey(screen));
-  }).then(function () {
+  queued(function () {
+    return guarded(['entries', 'outbox', 'kv'], function (s, got, missed) {
+      if (notReadable(['running', dk], missed)) return { refused: true, unreadable: true };
+      if (state.gen.running !== gen0.running || !unchanged('running', got, missed)) return { refused: true, why: 'save-walk' };
+      if (state.gen[dk] !== gen0.screen || !unchanged(dk, got, missed)) return { refused: true, why: 'save-screen' };
+      var wrote = {};
+      if (entry) { s.entries.put(entry); s.outbox.put(out); }
+      if (endV) { s.entries.put(endV); s.outbox.put(endOut); }
+      // Anything that could not be read at opening is left as it is (015).
+      if (!state.unread.running) {
+        if (newRunning) s.kv.put(newRunning, 'running'); else s.kv.delete('running');
+        wrote.running = newRunning || undefined;
+      }
+      s.kv.put(bar, 'lastSaved');
+      wrote.lastSaved = bar;
+      if (!state.unread[dk]) { s.kv.delete(dk); wrote[dk] = undefined; }
+      return { wrote: wrote };
+    });
+  }).then(function (res) {
+    if (res.refused) {
+      // Nothing was written: the screen gets back what was on it (unless taken from
+      // another copy meanwhile), then takes what another copy changed (016).
+      if (state.gen.running === gen0.running) state.running = runBefore;
+      if (state.gen[dk] === gen0.screen && !hasAnythingOf(screen, draftOf(screen))) setDraftOf(screen, saved);
+      if (res.unreadable) {
+        render();
+        showError(NOT_READ_SAVE);
+        specificShown = el('error').textContent;
+        return;
+      }
+      ['running', dk].forEach(function (k) {
+        if (!state.unread[k] && !res.missed[k] && !sameAsKnown(k, res.got[k])) take(k, res.got[k]);
+      });
+      afterGuarded(res, res.why);
+      storeDraft(true);
+      return;
+    }
     state.lastSaved = bar;
+    state.storedEdits[dk] = ed0;      // what he had on the screen is saved (016-4)
     delete state.unread.lastSaved;    // replaced by this Save, as always (015-3; Agent N, recheck R3)
     el('error').hidden = true;
     showUnread(false);                // the line about what could not be read stays while it applies (015-2)
     el('nothing').hidden = true;
+    var taken = afterGuarded(res, 'none');   // a screen another open copy changed meanwhile is taken (016)
     tidyEnds();
     storeDraft(true);                 // anything typed meanwhile is kept for the next entry
     render();
     kick();
     window.scrollTo(0, 0);
+    if (taken.length) showOtherLine('other');
   }, function () {
     state.running = runBefore;
     var nowDraft = draftOf(screen);
@@ -632,6 +989,14 @@ function undo() {
   }
   state.saving = true;
   var stamp = stampOf(new Date());
+  // What this Undo was worked out from (016): it undoes the green bar shown when Undo
+  // was tapped, so nothing is written if the stored green bar is no longer that one, or
+  // (when this Undo starts or ends a walk) if the walk running was taken from another
+  // copy since or changed there (016-2: compared with the bar itself; Agent P, note 1).
+  var barFp = fp('lastSaved', bar);
+  var gen0 = { lastSaved: state.gen.lastSaved, running: state.gen.running };
+  var touchesRun = !!(bar.ended || bar.started);
+  var refusedRes = null;
   var getV1 = bar.id ? DL.get('entries', bar.id + ':1') : Promise.resolve(null);
   getV1.then(function (v1) {
     if (bar.id && !v1) throw new Error('the saved entry was not found on this phone');
@@ -654,23 +1019,51 @@ function undo() {
     }
     var newBar = clone(bar);
     newBar.undone = true;
-    return DL.run(['entries', 'outbox', 'kv'], 'readwrite', function (s) {
-      puts.forEach(function (v) {
-        s.entries.put(v);
-        s.outbox.put({ key: v.key, seq: v.seq, status: 'waiting', payload: payloadFor(v) });
+    return queued(function () {
+      return guarded(['entries', 'outbox', 'kv'], function (s, got, missed) {
+        if (notReadable(touchesRun ? ['lastSaved', 'running'] : ['lastSaved'], missed)) return { refused: true, unreadable: true };
+        if (state.gen.lastSaved !== gen0.lastSaved || fp('lastSaved', got.lastSaved) !== barFp) return { refused: true, why: 'bar' };
+        if (touchesRun && (state.gen.running !== gen0.running || !unchanged('running', got, missed))) return { refused: true, why: 'walk' };
+        var wrote = {};
+        puts.forEach(function (v) {
+          s.entries.put(v);
+          s.outbox.put({ key: v.key, seq: v.seq, status: 'waiting', payload: payloadFor(v) });
+        });
+        if (restored) { s.kv.put(restored, 'running'); wrote.running = restored; }
+        else if (bar.started) { s.kv.delete('running'); wrote.running = undefined; }
+        s.kv.put(newBar, 'lastSaved');
+        wrote.lastSaved = newBar;
+        return { wrote: wrote };
       });
-      if (restored) s.kv.put(restored, 'running');
-      else if (bar.started) s.kv.delete('running');
-      s.kv.put(newBar, 'lastSaved');
-    }).then(function () {
+    }).then(function (res) {
+      if (res.refused) { refusedRes = res; return; }
       state.lastSaved = newBar;
       if (state.unread.lastSaved) { delete state.unread.lastSaved; refreshUnread(); }   // 015-3
       if (restored) state.running = restored;
       else if (bar.started) state.running = null;
+      afterGuarded(res, 'other');
     });
   }).then(function () {
     state.saving = false;
+    if (refusedRes) {
+      if (refusedRes.unreadable) { showError(NOT_READ_UNDO); specificShown = el('error').textContent; return; }
+      // The green bar was replaced by a newer Save of this page itself (Save and Undo
+      // tapped together): nothing to say; the newer bar shows (016-2; Agent P, note 1).
+      // Not so if anything was taken in from another copy since the tap (016-3; Agent P, W-a).
+      var g = refusedRes.got;
+      var mine = state.gen.lastSaved === gen0.lastSaved && state.gen.running === gen0.running &&
+                 Object.keys(g).every(function (k) { return sameAsKnown(k, g[k]); });
+      if (mine) { render(); return; }
+      // Nothing was written: takes what another open copy changed, and says so (016).
+      afterGuarded(refusedRes, 'undo');
+      return;
+    }
     if (!state.unread.running) state.draft.endTick = false;     // kept while the walk could not be read (015-3; Agent N, recheck R1)
+    // A "Not undone" line from an earlier try goes once an Undo works (016-3; Agent P, W-b).
+    var e = el('error');
+    if (!e.hidden && specificShown && e.textContent === specificShown && /^Not undone/.test(specificShown)) {
+      e.hidden = true; specificShown = ''; showUnread(false);
+    }
     tidyEnds();
     render();
     kick();
@@ -908,6 +1301,8 @@ function applyLink(got) {
   if (!got) return Promise.resolve();
   if (got.bad) { showError('That link could not be read. Nothing was changed.'); return Promise.resolve(); }
   return DL.get('kv', 'link').then(function (old) {
+    // Storage could not be opened when the page opened, but can now (016).
+    if (state.noStorage) { state.noStorage = false; refreshUnread(); }
     // The stored link could not be read when the page opened, but can now: use it (015).
     if (state.unread.link) {
       delete state.unread.link;
@@ -1720,18 +2115,37 @@ function wire() {
   window.addEventListener('hashchange', function () { applyLink(takeLinkFromAddress()); });
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState === 'hidden') {
+      // His changes not yet stored are written at once first, as at closing: the comparing
+      // write below waits for its reads, and the page can be stopped in that moment (016-5; Agent T, F1).
+      storeAtClose();
       // Not while a screen could not be read: what he typed there is not stored (015-2; Agent N, finding 2).
       storeDraft(true).then(function () { if (state.reloadWhenHidden && !unreadScreen()) location.reload(); });
     } else {
+      catchUp();                    // another open copy may have changed things meanwhile (016)
       render();
       kick();
       checkForNewVersion();
     }
   });
-  window.addEventListener('pagehide', function () { storeDraft(true); });
+  window.addEventListener('pagehide', storeAtClose);
+  // His own taps and typing on the screen in front (anything but the headings, the
+  // green bar, the lines and Save), counted only to decide what is written at closing (016-4).
+  ['click', 'input', 'change'].forEach(function (type) {
+    document.addEventListener(type, function (e) {
+      var t = e.target;
+      if (!t || !t.closest || !t.closest('main') || t.closest('#savedbar, #error, #status, #save, #nothing')) return;
+      var k = draftKey(state.screen);
+      state.edits[k] = (state.edits[k] || 0) + 1;
+    }, true);
+  });
+  window.addEventListener('pageshow', function (e) { if (e.persisted) catchUp(); });
   try {
     var bc = new BroadcastChannel('daylog');
-    bc.onmessage = function () { refreshStatus(); };
+    keptChannel = bc;               // this page's own messages do not come back to it
+    bc.onmessage = function (e) {
+      refreshStatus();
+      if (e && e.data === 'kept' && document.visibilityState === 'visible') catchUp();
+    };
   } catch (e) { /* not available */ }
 
   // The clock at the top moves until the first tap (G26); the green bar goes at
@@ -1806,6 +2220,10 @@ function heldEnds() {
 function unreadScreen() { return SCREENS.some(function (s) { return !!state.unread[draftKey(s)]; }); }
 // The red line about what could not be read, or '' when everything was (015).
 function unreadText() {
+  // Storage not opened at all: nothing can be saved, whatever arrives (016; session 15 records check).
+  if (state.noStorage) {
+    return 'This phone’s storage could not be opened, so nothing can be saved. Close the page and open it again; if it keeps happening, tell Claude.';
+  }
   var missed = KEPT.filter(function (k) { return state.unread[k[0]]; }).map(function (k) { return k[1]; });
   if (!missed.length) return '';
   var screens = SCREENS.filter(function (s) { return state.unread[draftKey(s)]; });
@@ -1870,24 +2288,19 @@ function start() {
         if (r[i].ok) got[k[0]] = r[i].value;
         else { state.unread[k[0]] = true; missed.push(k[1]); }
       });
-      state.running = got['running'] || null;
-      var d = got['draft'];
-      state.draft = (d && d.scores) ? fillDraft(d) : emptyDraft();
-      settleUsualPicks(state.draft);
-      state.mdraft = fillOther(got['draft-Morning'], emptyMorning());
-      state.edraft = fillOther(got['draft-Evening'], emptyEvening());
+      // Each of the five is taken as read, and remembered for comparing before
+      // writing (016); a damaged one counts as not read (Agent N, note 7).
+      GUARDED.forEach(function (k) {
+        if (!state.unread[k] && !take(k, got[k])) missed.push(k);
+      });
       state.loaded = true;
-      state.lastSaved = got['lastSaved'] || null;
       state.link = got['link'] || null;
       state.test = !!(state.link && state.link.test);
+      state.noStorage = !res.opens;
       buildUsualChoices();
       render();
       askToKeepStorage();
-      if (!res.opens) {
-        showError('This phone’s storage could not be opened, so nothing can be saved. Close the page and open it again; if it keeps happening, tell Claude.');
-      } else if (missed.length) {
-        showUnread(true);
-      }
+      if (state.noStorage || missed.length) showUnread(true);
       // A link arriving is taken even then: applyLink reads the stored link itself (Q37).
       return applyLink(arrived);
     });

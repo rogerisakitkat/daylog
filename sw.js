@@ -1,12 +1,12 @@
 'use strict';
 /*
- * Day log page, increment 003 (2026-10-07; version 015-3): the part Chrome keeps on the
+ * Day log page, increment 003 (2026-10-07; version 016-5): the part Chrome keeps on the
  * phone so the page opens and saves with no signal (D19, R27), takes over a
  * new approved version by itself (D23), and sends waiting entries when signal
  * comes back even with the page closed, where Chrome allows it.
  * Changing VERSION is what makes Chrome fetch a new version of the page.
  */
-var VERSION = '015-3';
+var VERSION = '016-5';
 var CACHE = 'daylog-' + VERSION;
 var FILES = ['./', 'index.html', 'app.js', 'send.js', 'style.css', 'manifest.webmanifest',
              'icon-192.png', 'icon-512.png', 'icon-maskable-512.png'];
