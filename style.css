@@ -160,6 +160,9 @@ h3 { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.06em; color
 .fixbanner b { color: var(--accent); }
 .fixhelp { font-size: 13.5px; color: var(--muted); margin-top: 2px; }
 .btn.wide { display: block; width: calc(100% - 24px); margin: 8px 12px 0; padding: 12px; text-align: center; font-size: 16px; }
+/* Morning or Evening saved today (023, R98): greyed, taps do nothing, the grey box with Edit */
+section.greyed { filter: grayscale(1); opacity: .5; pointer-events: none; }
+.savedro { margin: 10px 12px 12px; }
 /* Earlier days (022, R96): arrows on the list's heading, Back to today, the read-only box */
 .dayhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 6px 12px 8px; }
 .dayhead b { font-size: 17px; text-align: center; }

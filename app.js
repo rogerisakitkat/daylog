@@ -97,8 +97,21 @@
  * earlier day shows no read-only box (11).
  * 022-4 (Agent Y's recheck, R1): the night question is not asked when the Log day changes too, so it and the
  * "another day" question can no longer take turns at Save changes without saving.
+ * 023 (2026-10-10): once today's Morning or Evening entry is saved, that screen shows it greyed, and taps on it do
+ * nothing, with a grey box "Today's Morning entry is saved. Tap Edit to change it." and Edit; no Save button (R98,
+ * D155). Edit opens it on the yellow changing screen as "Change this entry" does; Save changes or Cancel puts the
+ * screen back to grey (G023-2). Blank again when the day turns at 5:00 AM. With a walk or workout still running, the
+ * Evening box asking when it ended works as before above the grey part, and Save saves only its end (D156). What the
+ * screens show is worked out from the stored entries (state.shown, memory only); where a change was opened from (from)
+ * is kept in memory only, never stored, so nothing new is stored and the way back to 022-4 is unaffected.
+ * 023-2 (Agent Z): a half-filled screen keeps the screen from greying only when it holds something Save would save
+ * (W2); Edit tapped just after 5:00 AM, before the page noticed the new day, shows the new day at once (W3); Cancel
+ * also takes away the red lines about a Save changes that was not made (W4).
+ * 023-3 (D157; Agent Z, W1): before 5:00 AM the grey box names the day ("Saturday's Morning entry is saved") and on
+ * Morning says a new Morning can be saved from 5:00 AM.
+ * 023-4 (Agent Z's recheck, W5): Cancel also takes away the line saying another entry is being changed (G023-5).
  */
-var PAGE_VERSION = '022-4';
+var PAGE_VERSION = '023-4';
 var SCREENS = ['Morning', 'Intraday', 'Evening'];
 var SCORE_ROWS = ['Mind', 'Body', 'Balance'];
 var MORNING_SCORES = [{ label: 'Quality', key: 'Sleep quality' }, { label: 'Amount', key: 'Sleep amount' }];
@@ -108,6 +121,7 @@ var MORNING_TIMES = ['Went to sleep', 'Woke up', 'Got out of bed'];   // R44
 var EVENING_TIMES = ['Got in bed'];                                    // R40
 var SCORE_VALUES = [-3, -2, -1, 0, 1, 2, 3];
 var WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+var WEEKDAYS_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];   // the grey box before 5:00 AM (023-3)
 var DAY_STARTS_AT = 5;            // before 05:00 an entry belongs to the day before (R75)
 var COMMENT_MAX = 20000;          // the sheet takes up to 40,000 characters in a cell
 var WHY_MAX = 2000;               // and up to 45,000 for the whole copy for the app
@@ -165,7 +179,8 @@ var state = {
   storedEdits: {},                // how many of those the stored screen holds
   noStorage: false,               // the phone's storage could not be opened at all when the page opened
   fix: null,                      // an entry being changed (019): { id, base, test, orig, dr, opened }
-  fixConfirm: null                // a change to another day, asked about once (019, G019-5)
+  fixConfirm: null,               // a change to another day, asked about once (019, G019-5)
+  shown: null                     // today's saved Morning and Evening entries, shown greyed (023): { day, Morning, Evening }
 };
 var KEY_FIX = 'draft-fix';        // where a change in progress is kept (019)
 
@@ -315,6 +330,57 @@ function setDraftOf(screen, d) {
 function emptyOf(screen) { return screen === 'Morning' ? emptyMorning() : (screen === 'Evening' ? emptyEvening() : emptyDraft()); }
 function draftKey(screen) { return screen === 'Intraday' ? 'draft' : 'draft-' + screen; }
 function cur() { return draftOf(state.screen); }
+
+// Morning and Evening once today's entry is saved (023, R98): the screen shows that entry greyed, with Edit.
+// Not while it is being changed there, and not while the screen holds something typed and not saved (a
+// half-filled screen left from before, G023-4), so nothing typed is ever hidden. The Evening box about a walk
+// still running is not part of the screen and keeps working (D156).
+function typedOn(screen, dr) {
+  if (!dr) return false;
+  return contentOf(screen, dr);     // something Save would save; spaces only or a Why with Notable off do not count (023-2; Agent Z, W2)
+}
+function greyOn(screen) {
+  if (screen !== 'Morning' && screen !== 'Evening') return false;
+  var sh = state.shown;
+  if (fixOn(screen) || !sh || sh.day !== currentLogDay() || !sh[screen]) return false;
+  return !typedOn(screen, screen === 'Morning' ? state.mdraft : state.edraft);
+}
+// The grey box's words: "Today's" from 5:00 AM to midnight; after midnight, until 5:00 AM, the day's name (D157).
+function savedBoxText(screen) {
+  var ld = currentLogDay();
+  if (ld === dateStr(new Date())) return 'Today’s ' + screen + ' entry is saved. Tap Edit to change it.';
+  var p = parts(ld);
+  return WEEKDAYS_FULL[new Date(p.y, p.m - 1, p.d, 12).getDay()] + '’s ' + screen + ' entry is saved. Tap Edit to change it.' +
+         (screen === 'Morning' ? ' A new Morning can be saved from 5:00 AM.' : '');
+}
+// What a screen shows: the saved entry while greyed, else what draftOf gives.
+function viewOf(screen) {
+  return greyOn(screen) ? fixScreenDraftFrom(state.shown[screen].fields, screen) : draftOf(screen);
+}
+// Of two saved entries of one screen and day, the one with the later time (G023-3); the same time: the later saved.
+function shownMoment(v) { var f = v.fields; return momentOf(calDateOf(f), f['Time']).getTime(); }
+function laterThan(a, b) {
+  var ma = shownMoment(a), mb = shownMoment(b);
+  return ma !== mb ? ma > mb : (a.seq || 0) > (b.seq || 0);
+}
+// An entry this page can show greyed: its time and day can be read (else the screen stays as before).
+function shownOk(v) {
+  var f = v && v.fields;
+  return !!f && isHM(f['Time']) && (isDay(f['Calendar date']) || isDay(f['Log day']));
+}
+function shownSig() {
+  var sh = state.shown;
+  return sh ? [sh.day, sh.Morning ? sh.Morning.key : '', sh.Evening ? sh.Evening.key : ''].join('|') : '';
+}
+// A Save or Save changes of a Morning or Evening entry shows at once, before the entries are read again.
+function noteShown(screen, v) {
+  var today = currentLogDay(), f = v.fields || {};
+  if ((screen !== 'Morning' && screen !== 'Evening') || !shownOk(v) || !!v.test !== !!state.test) return;
+  if (!state.shown || state.shown.day !== today) state.shown = { day: today, Morning: null, Evening: null };
+  var cur0 = state.shown[screen];
+  if (f['Log day'] !== today) { if (cur0 && cur0.id === v.id) state.shown[screen] = null; return; }
+  if (!cur0 || cur0.id === v.id || laterThan(v, cur0)) state.shown[screen] = v;
+}
 
 function hasText(s) { return typeof s === 'string' && /\S/.test(s); }
 function anyValue(o) { return Object.keys(o).some(function (k) { return o[k] !== null; }); }
@@ -1070,6 +1136,7 @@ function save() {
       return;
     }
     state.lastSaved = bar;
+    if (entry) noteShown(screen, entry);    // Morning or Evening: greyed at once (023)
     armedId = null;                   // the Change button goes after a Save (020)
     listDay = null;                   // the list comes back to today, where the new entry is (G022-3)
     listEditDay = null;
@@ -1373,9 +1440,18 @@ var TAP_SHIELD_MS = 400, tapShield = 0;
 function shieldTaps(ms) { tapShield = Math.max(tapShield, Date.now() + ms); }
 
 var opening = false;
-function openFix(id) {
-  if (state.reading || !state.loaded || state.noStorage || state.fix || opening || state.screen !== 'Intraday') return;
-  if (dayLocked()) return;                            // an earlier day is read only until Edit (R78; 022)
+var ANOTHER_OPEN = 'You are already changing another entry, on ';     // G023-5; goes at Cancel (023-4)
+// from: 'Morning' or 'Evening' when opened with Edit on that screen while it is greyed (023), else from today's list.
+function onFrom(from) { return from ? state.screen === from && greyOn(from) : state.screen === 'Intraday'; }
+function openFix(id, from) {
+  if (from && state.fix && !opening && !state.reading) {                // another change is open (G023-5)
+    var ofs = fixScreenOf(state.fix);
+    showError(ANOTHER_OPEN + ofs + '. Tap Save changes or Cancel there first, then Edit here.');
+    specificShown = el('error').textContent;
+    return;
+  }
+  if (state.reading || !state.loaded || state.noStorage || state.fix || opening || !onFrom(from)) return;
+  if (!from && dayLocked()) return;                   // an earlier day is read only until Edit (R78; 022)
   if (state.unread[KEY_FIX]) { showError(CANT_CHANGE_NOW); return; }
   opening = true;
   DL.run(['entries'], 'readonly', function (s, r) {
@@ -1384,11 +1460,13 @@ function openFix(id) {
   }).then(function (r) {
     opening = false;
     var top = newestOf(r.list);
-    if (!top || top.state === 'undone' || state.fix || state.screen !== 'Intraday' || !!top.test !== !!state.test) return;
+    if (!top || top.state === 'undone' || state.fix || !onFrom(from) || !!top.test !== !!state.test) return;
     var f = top.fields || {};
+    // From the grey screen: only today's entry of that screen, as shown (023).
+    if (from && (f['Screen'] !== from || f['Log day'] !== currentLogDay() || !state.shown || !state.shown[from] || state.shown[from].id !== id)) { refreshDone(); return; }
     // Only an entry of the day the list shows, and that day not read only: a Change button left showing across
     // 5:00 AM, or from the day before a quick arrow tap, opens nothing (022-3; Agent Y, 1).
-    if (f['Log day'] !== shownDay() || dayLocked()) { armedId = null; refreshList(); return; }
+    if (!from && (f['Log day'] !== shownDay() || dayLocked())) { armedId = null; refreshList(); return; }
     var scr = f['Screen'] === 'Morning' || f['Screen'] === 'Evening' ? f['Screen'] : 'Intraday';     // 021
     if (!isHM(f['Time']) || !(isDay(f['Calendar date']) || isDay(f['Log day']))) {
       showError('This entry’s time could not be read, so it can’t be changed on the phone. Tell Claude.');
@@ -1403,6 +1481,7 @@ function openFix(id) {
     state.interacted = true;                          // a new page version waits until he leaves (Agent W, N5)
     state.fix = { id: id, base: top.version, test: !!top.test, orig: clone(f), screen: scr,
                   dr: scr === 'Intraday' ? fixDraftFrom(f) : fixScreenDraftFrom(f, scr), opened: DL.stampNow() };
+    if (from) state.fix.from = from;                  // back to this screen after Save changes or Cancel (G023-2); never stored
     if (scr !== 'Intraday') state.screen = scr;       // the entry opens on its own screen (R88; 021)
     state.fixConfirm = null;
     state.fixLongOk = null;
@@ -1433,9 +1512,11 @@ function cancelFix(note) {
   armedId = null;
   closePad();
   closeTpad();
-  if (fixScreenOf(state.fix) !== 'Intraday' && state.screen === fixScreenOf(state.fix)) state.screen = 'Intraday';   // G021-1
+  if (fixScreenOf(state.fix) !== 'Intraday' && state.screen === fixScreenOf(state.fix) && !state.fix.from) state.screen = 'Intraday';   // G021-1; not when opened there (G023-2)
   state.fix = null;
   clearFixLine();
+  var e0 = el('error');                              // the lines saying to tap Cancel or Save changes again are stale now (023-2; Agent Z, W4)
+  if (!e0.hidden && (e0.textContent === FIX_CHANGED || e0.textContent === NOT_READ_FIX || e0.textContent.indexOf(ANOTHER_OPEN) === 0)) { e0.hidden = true; specificShown = ''; showUnread(false); }
   state.fixConfirm = null;
   state.edits[KEY_FIX] = (state.edits[KEY_FIX] || 0) + 1;
   storeDraft(true);
@@ -1573,7 +1654,7 @@ function saveFix() {
   var saved = fx, runBefore = run;
   var screenBefore = state.screen;
   state.fix = null;                                  // the screen goes back at once, as after Save
-  if (scr !== 'Intraday') state.screen = 'Intraday';  // back to today's list (G021-1)
+  if (scr !== 'Intraday' && !fx.from) state.screen = 'Intraday';  // back to today's list (G021-1); opened on the grey screen: stays there (G023-2)
   state.running = newRunning;
   closePad();
   closeTpad();
@@ -1618,6 +1699,7 @@ function saveFix() {
     }
     state.lastSaved = bar;
     armedId = null;
+    if (scr !== 'Intraday') noteShown(scr, entry);    // the grey screen shows the changed entry at once (023)
     state.flash = { id: fx.id, until: Date.now() + 4000 };     // shaded green in today's list (G24)
     setTimeout(refreshList, 4100);
     state.storedEdits[KEY_FIX] = ed0;
@@ -1645,23 +1727,29 @@ function saveFix() {
 
 // Morning or Evening is done for the day when an entry from it, for today's
 // log day, is on this phone and its newest version is not undone.
-var doneBusy = false;
+var doneBusy = false, doneAgain = false;
 function refreshDone() {
-  if (doneBusy) return Promise.resolve();
+  if (doneBusy) { doneAgain = true; return Promise.resolve(); }     // read again when this one ends (023)
   doneBusy = true;
   var today = currentLogDay();
+  var fin = function () { doneBusy = false; if (doneAgain) { doneAgain = false; refreshDone(); } };
   return newestEntries().then(function (newest) {
-    var done = { Morning: false, Evening: false };
+    var done = { Morning: false, Evening: false }, top = { Morning: null, Evening: null };
     Object.keys(newest).forEach(function (id) {
       var v = newest[id], f = v.fields || {};
       if (v.state !== 'undone' && (f['Screen'] === 'Morning' || f['Screen'] === 'Evening') &&
-          f['Log day'] === today && !!v.test === !!state.test) done[f['Screen']] = true;
+          f['Log day'] === today && !!v.test === !!state.test) {
+        done[f['Screen']] = true;
+        if (shownOk(v) && (!top[f['Screen']] || laterThan(v, top[f['Screen']]))) top[f['Screen']] = v;     // 023
+      }
     });
+    var sig0 = shownSig();
     state.done = done;
     state.doneDay = today;
-    doneBusy = false;
-    renderHeads();
-  }, function () { doneBusy = false; });
+    state.shown = { day: today, Morning: top.Morning, Evening: top.Evening };
+    fin();
+    if (shownSig() !== sig0) render(); else renderHeads();
+  }, fin);
 }
 
 // ------------------------------------------------------------------ the usual ones in the phone's storage (012)
@@ -2246,6 +2334,18 @@ function render() {
   renderHeads();
   SCREENS.forEach(function (s) { el('sc-' + s).hidden = s !== screen; });
   var fixing = fixOn(screen);
+  // Morning or Evening saved today: greyed, taps on it do nothing, Edit in the grey box (023, R98)
+  var grey = greyOn(screen);
+  ['Morning', 'Evening'].forEach(function (s) {
+    var g = greyOn(s);
+    el('sc-' + s).classList.toggle('greyed', g);
+    el('sc-' + s).inert = g;
+  });
+  el('savedro').hidden = !grey;
+  if (grey) el('savedrotext').textContent = savedBoxText(screen);
+  el('save').hidden = grey && !endBoxOn(screen);     // Save stays only for the walk's end (D156)
+  el('edit').style.visibility = grey ? 'hidden' : '';
+  if (grey) { closePad(); el('nothing').hidden = true; }
   el('else').hidden = screen !== 'Intraday' || !!state.fix;     // today's list: Intraday only (018, G018-1); hidden while changing an entry (G019-1, G021-2)
   el('fixbanner').hidden = !fixing;
   var fo = state.fix ? state.fix.orig : null;
@@ -2308,7 +2408,8 @@ function render() {
   renderEvening();
   // The time pad goes when its screen is left or its End box is gone (Agent Q, round 2).
   if (!el('tpad').hidden && (!state.tpadFor || state.tpadFor.screen !== screen || (state.tpadFor.end && !endBoxOn(screen)) ||
-                              (state.tpadFor.fixEnd && !fixOn(screen)))) closeTpad();
+                              (state.tpadFor.fixEnd && !fixOn(screen)) ||
+                              (!state.tpadFor.end && !state.tpadFor.fixEnd && greyOn(screen)))) closeTpad();     // 023
 
   refreshStatus();
 }
@@ -2316,7 +2417,7 @@ function render() {
 function renderScores() {
   Array.prototype.forEach.call(document.querySelectorAll('.srow'), function (row) {
     var s = row.getAttribute('data-s'), k = row.getAttribute('data-k');
-    var v = draftOf(s).scores[k];
+    var v = viewOf(s).scores[k];       // the saved entry while greyed (023)
     Array.prototype.forEach.call(row.querySelectorAll('.n'), function (b) {
       var on = v !== null && v !== undefined && Number(b.getAttribute('data-v')) === v;
       b.classList.toggle('pick', on);
@@ -2432,7 +2533,7 @@ function setTimeButton(btn, hhmm) {
 }
 
 function renderMorning() {
-  var dr = draftOf('Morning');
+  var dr = viewOf('Morning');          // the saved entry while greyed (023)
   MORNING_TIMES.forEach(function (k) { setTimeButton(document.querySelector('.tset[data-s="Morning"][data-k="' + k + '"]'), dr.times[k]); });
   Array.prototype.forEach.call(document.querySelectorAll('#phone .ynb'), function (b) {
     var on = dr.phone === b.getAttribute('data-v');
@@ -2443,7 +2544,7 @@ function renderMorning() {
 }
 
 function renderEvening() {
-  var dr = draftOf('Evening');
+  var dr = viewOf('Evening');          // the saved entry while greyed (023)
   EVENING_TIMES.forEach(function (k) { setTimeButton(document.querySelector('.tset[data-s="Evening"][data-k="' + k + '"]'), dr.times[k]); });
   el('daynotable').checked = dr.notable;
   el('tk-daynotable').classList.toggle('on', dr.notable);
@@ -2491,7 +2592,7 @@ function renderEndBox() {
 
 // The entry's time (G2, G21, G23, G26)
 function renderWhen() {
-  var dr = cur();
+  var dr = viewOf(state.screen);       // the saved entry's time while greyed (023)
   var shown = dr.fixed || { date: dateStr(new Date()), time: timeStr(new Date()) };
   el('whendate').textContent = weekday(shown.date) + ' ' + usDate(shown.date) + ' · ';
   el('whentime').textContent = ampm(shown.time);
@@ -3037,6 +3138,20 @@ function wire() {
     var t = e.target;
     if (t && t.closest && t.closest('main')) { e.stopImmediatePropagation(); e.preventDefault(); }
   }, true);
+  ['click', 'beforeinput', 'change'].forEach(function (ev) {
+    document.addEventListener(ev, function (e) {
+      var t = e.target;
+      if (t && t.closest && t.closest('section.greyed')) { e.stopImmediatePropagation(); e.preventDefault(); }     // 023
+    }, true);
+  });
+  el('savededit').addEventListener('click', function () {      // Edit on the grey Morning or Evening screen (023, R98)
+    var s = state.screen;
+    if (!greyOn(s)) { refreshDone(); render(); return; }     // e.g. just after 5:00 AM: the new day shows at once (023-2; Agent Z, W3)
+    var v = state.shown && state.shown[s];
+    if (!v) return;
+    shieldTaps(TAP_SHIELD_MS);      // the screen changes under his finger
+    openFix(v.id, s);
+  });
   el('save').addEventListener('click', function () { if (fixOn(state.screen)) saveFix(); else save(); });
   el('cancelfix').addEventListener('click', function () { cancelFix(''); });
   // Tapping an entry in today's list opens it to change (019, R88).
@@ -3172,6 +3287,7 @@ function wire() {
   setInterval(function () {
     var b = state.lastSaved;
     if (!cur().fixed) renderWhen();
+    if (greyOn(state.screen)) el('savedrotext').textContent = savedBoxText(state.screen);     // "Today's" becomes the day's name at midnight (023-3)
     if (b && barGone(b) && !el('savedbar').hidden) render();
     var d = currentLogDay();
     if (d !== lastDay) { lastDay = d; armedId = null; refreshDone(); render(); }     // the Change button goes at 5:00 AM (022-3)
