@@ -81,8 +81,24 @@
  * asked about once more at Save changes (X1); "Saved when you tap Save changes" (N6).
  * 021-3 (Agent X's recheck): the red lines about the entry being changed (12 hours, another day,
  * start after end) go after Cancel, and after Edit or a new end changes what they were about.
+ * 022 (2026-10-09): earlier days (R64, R73, R78, R96). Arrows on today's list's heading show an earlier
+ * day in the same spot, read only until Edit (R78); after Edit, entries change as today's do (R92, R93).
+ * The day shown and the Edit unlock are kept in memory only, never stored (G022-1), so nothing new is
+ * stored and the way back to 021-3 is unaffected. A time typed with Edit for an earlier day's entry
+ * stays on that day (R97); for today's entries Edit works as before. A normal Save brings the list
+ * back to today (G022-3).
+ * 022-3 (Agent Y): an entry opens only if it is of the day the list shows and that day is not read only, so a
+ * Change button left showing across 5:00 AM or from the day before a quick arrow tap opens nothing (1, 12);
+ * Edit unlocks only the day drawn; Edit's time on an earlier day takes the later 1:30 AM when the clocks go
+ * back, as today's Edit does, and says when the clocks skipped the time typed (2, 3); an earlier day's entry
+ * given a time before 5:00 AM asks once more (4, G022-7); the "another day" line says it can't be moved back
+ * (5); "changed" on an earlier day's list carries its date (6); the line after changing an earlier day's
+ * entry says where it is (7); a clock set back no longer leaves the tap shield on for that long (8); an empty
+ * earlier day shows no read-only box (11).
+ * 022-4 (Agent Y's recheck, R1): the night question is not asked when the Log day changes too, so it and the
+ * "another day" question can no longer take turns at Save changes without saving.
  */
-var PAGE_VERSION = '021-3';
+var PAGE_VERSION = '022-4';
 var SCREENS = ['Morning', 'Intraday', 'Evening'];
 var SCORE_ROWS = ['Mind', 'Body', 'Balance'];
 var MORNING_SCORES = [{ label: 'Quality', key: 'Sleep quality' }, { label: 'Amount', key: 'Sleep amount' }];
@@ -1055,6 +1071,8 @@ function save() {
     }
     state.lastSaved = bar;
     armedId = null;                   // the Change button goes after a Save (020)
+    listDay = null;                   // the list comes back to today, where the new entry is (G022-3)
+    listEditDay = null;
     // The entry just saved is shaded green in today's list for a moment (G24; 018).
     state.flash = { id: bar.id || (bar.ended && bar.ended.id) || null, until: Date.now() + 4000 };
     setTimeout(refreshList, 4100);
@@ -1357,6 +1375,7 @@ function shieldTaps(ms) { tapShield = Math.max(tapShield, Date.now() + ms); }
 var opening = false;
 function openFix(id) {
   if (state.reading || !state.loaded || state.noStorage || state.fix || opening || state.screen !== 'Intraday') return;
+  if (dayLocked()) return;                            // an earlier day is read only until Edit (R78; 022)
   if (state.unread[KEY_FIX]) { showError(CANT_CHANGE_NOW); return; }
   opening = true;
   DL.run(['entries'], 'readonly', function (s, r) {
@@ -1367,6 +1386,9 @@ function openFix(id) {
     var top = newestOf(r.list);
     if (!top || top.state === 'undone' || state.fix || state.screen !== 'Intraday' || !!top.test !== !!state.test) return;
     var f = top.fields || {};
+    // Only an entry of the day the list shows, and that day not read only: a Change button left showing across
+    // 5:00 AM, or from the day before a quick arrow tap, opens nothing (022-3; Agent Y, 1).
+    if (f['Log day'] !== shownDay() || dayLocked()) { armedId = null; refreshList(); return; }
     var scr = f['Screen'] === 'Morning' || f['Screen'] === 'Evening' ? f['Screen'] : 'Intraday';     // 021
     if (!isHM(f['Time']) || !(isDay(f['Calendar date']) || isDay(f['Log day']))) {
       showError('This entry’s time could not be read, so it can’t be changed on the phone. Tell Claude.');
@@ -1400,7 +1422,7 @@ function openFix(id) {
 
 // The red lines about the entry being changed go once they no longer apply: after Cancel or Save changes,
 // and after Edit or a new end changes the time they were about (021-3; Agent X's recheck).
-var FIX_LINE = /^(This makes the (walk|workout) more than |This time puts the entry on |The (walk|workout) ended at |With this start, the end at |An entry can’t be left with nothing in it)/;
+var FIX_LINE = /^(This makes the (walk|workout) more than |This time puts the entry on |This time is |The (walk|workout) ended at |With this start, the end at |An entry can’t be left with nothing in it)/;
 function clearFixLine() {
   var e = el('error');
   if (!e.hidden && FIX_LINE.test(e.textContent)) { e.hidden = true; specificShown = ''; showUnread(false); }
@@ -1494,13 +1516,27 @@ function saveFix() {
       return;
     }
   }
-  // Moved to another day: asked once more, since there is no Undo and earlier days can't be opened yet (G019-5).
+  // An earlier day's entry given a time before 5:00 AM goes on the night after that day, which still counts for it (R75):
+  // asked once more, since he may have meant that morning (022-3; Agent Y, 4; G022-7).
+  if (earlierFixDay() && fields['Log day'] === fx.orig['Log day'] && isHM(fx.orig['Time']) && Number(fx.orig['Time'].slice(0, 2)) >= DAY_STARTS_AT &&
+      Number(fields['Time'].slice(0, 2)) < DAY_STARTS_AT) {
+    var nk = fx.id + '|night|' + fields['Calendar date'] + '|' + fields['Time'];
+    if (state.fixConfirm !== nk) {
+      state.fixConfirm = nk;
+      showError('This time is ' + ampm(fields['Time']) + ' on ' + weekday(fields['Calendar date']) + ' ' + usDate(fields['Calendar date']) +
+                ', the night after ' + weekday(fields['Log day']) + ' ' + usDate(fields['Log day']) + ' (before 5:00 AM it still counts for that day). ' +
+                'Tap Save changes again to keep it, or change the time with Edit.');
+      specificShown = el('error').textContent;
+      return;
+    }
+  }
+  // Moved to another day: asked once more, since there is no Undo (G019-5; from 022 the line says where it goes, G022-5).
   if (fields['Log day'] !== fx.orig['Log day']) {
     var ck = fx.id + '|' + fields['Log day'] + '|' + fields['Time'];
     if (state.fixConfirm !== ck) {
       state.fixConfirm = ck;
       showError('This time puts the entry on ' + weekday(fields['Log day']) + ' ' + usDate(fields['Log day']) +
-                ', so it will leave today’s list, and earlier days can’t be opened on the phone yet. ' +
+                ', so it will leave today’s list and can’t be moved back to today afterwards (it will show under the ‹ arrow). ' +
                 'Tap Save changes again to keep it, or change the time with Edit.');
       specificShown = el('error').textContent;
       return;
@@ -1781,6 +1817,27 @@ var listChanged = {};             // for each entry, when it was last changed wi
 var armedId = null;               // the entry showing "Change this entry" (020, R92); never stored
 var armedAt = 0;                  // when it appeared: the button works only after ARMED_MS (020-2; Agent W, W1)
 var ARMED_MS = 700;
+var listDay = null;               // the earlier day the list shows (022, R96); null for today; never stored (G022-1)
+var listEditDay = null;           // the earlier day unlocked with Edit (R78); never stored
+var listFirstDay = null;          // the first day this phone has an entry for (the ‹ arrow stops there)
+var listHeadDay = null;           // the day whose heading and list are drawn now; Edit unlocks only that one (022-3; Agent Y, 12)
+// The day the list shows: today unless an earlier day was picked with the arrows.
+function shownDay() {
+  var t = currentLogDay();
+  if (listDay && listDay >= t) { listDay = null; listEditDay = null; }    // the clock was set back: today again
+  return listDay || t;
+}
+// An earlier day not unlocked with Edit: its entries can't be opened (R78).
+function dayLocked() { var d = shownDay(); return d !== currentLogDay() && listEditDay !== d; }
+function showDay(d) {
+  var t = currentLogDay();
+  var nd = !d || d >= t ? null : d;
+  if (nd === listDay) return;
+  listDay = nd;
+  listEditDay = null;               // leaving a day locks it again (G022-1)
+  armedId = null;
+  refreshList();
+}
 var newestReading = null, newestReadingGen = 0;
 // The newest version of every entry, by id: read once for each change (listGen) and shared
 // by today's list and the check marks on Morning and Evening (refreshDone), so a Save
@@ -1812,11 +1869,12 @@ function refreshList() {
   if (listBusy) { listAgain = true; return Promise.resolve(); }
   listBusy = true;
   var today = currentLogDay();
+  var day = shownDay();             // today, or the earlier day picked with the arrows (022)
   var done = function () { listBusy = false; if (listAgain) { listAgain = false; refreshList(); } };
   var failed = function () {
     // Nothing new to show: the last drawing stays; an empty list says so (018-2; Agent V, W5).
     var box = el('today');
-    if (!box.firstChild) box.appendChild(listDiv('empty', 'Today’s list could not be read just now. If this keeps happening, close the page and open it again.'));
+    if (!box.firstChild) box.appendChild(listDiv('empty', (day === today ? 'Today’s list' : 'The list for this day') + ' could not be read just now. If this keeps happening, close the page and open it again.'));
     listDrawn = '';
     done();
   };
@@ -1828,11 +1886,18 @@ function refreshList() {
       if (!pl || pl.kind !== 'log') return;
       if (x.status !== 'refused') waiting[pl.id] = true;
     });
-    var key = listReadGen + '|' + today + '|' + !!state.test;
+    var key = listReadGen + '|' + day + '|' + !!state.test;
     if (!listRows || listRowsKey !== key) {
+      // The first day with an entry on this phone, for the ‹ arrow (022).
+      var first = null;
+      Object.keys(newest).forEach(function (id) {
+        var v = newest[id], ld = (v.fields || {})['Log day'];
+        if (v.state !== 'undone' && !!v.test === !!state.test && isDay(ld) && (!first || ld < first)) first = ld;
+      });
+      listFirstDay = first;
       listRows = Object.keys(newest).map(function (id) { return newest[id]; }).filter(function (v) {
         var f = v.fields || {};
-        return v.state !== 'undone' && f['Log day'] === today && !!v.test === !!state.test;
+        return v.state !== 'undone' && f['Log day'] === day && !!v.test === !!state.test;
       });
       listRows.sort(function (x, y) {
         var kx = listKey(x), ky = listKey(y);
@@ -1848,15 +1913,17 @@ function refreshList() {
     // the evening before): a line says where it went (018-2; Agent V, W4).
     var bar = state.lastSaved, away = '';
     var bid = bar ? (bar.id || bar.fixId) : null;      // a change saved (019) has its entry in fixId
-    if (bar && !bar.undone && bid && !barGone(bar) && newest[bid] &&
+    if (day === today && bar && !bar.undone && bid && !barGone(bar) && newest[bid] &&
         newest[bid].state !== 'undone' && !!newest[bid].test === !!state.test) {
       var bd = (newest[bid].fields || {})['Log day'];
       if (typeof bd === 'string' && bd !== today) away = bd;
     }
     var awayFix = !!(away && bar.fix);
     if (armedId && !listRows.some(function (v) { return v.id === armedId; })) armedId = null;
-    sig += '|' + away + '|' + awayFix + '|' + (armedId || '');
-    if (sig !== listDrawn || !el('today').firstChild) { drawList(listRows, waiting, refused, away, awayFix); listDrawn = sig; }
+    var locked = dayLocked();
+    sig += '|' + away + '|' + awayFix + '|' + (armedId || '') + '|' + locked + '|' + today;
+    renderDayHead(day, today, locked, listRows.length);
+    if (sig !== listDrawn || !el('today').firstChild) { drawList(listRows, waiting, refused, away, awayFix, day !== today, locked, day); listDrawn = sig; }
   }).then(done, failed);
 }
 // Entries the sheet turned away and not since replaced by a newer version of them: a refused
@@ -1934,13 +2001,28 @@ function listParts(f) {
   return { title: title.join('; '), details: details, words: words, marks: marks };
 }
 function listDiv(cls, text) { var d = document.createElement('div'); d.className = cls; d.textContent = text; return d; }
-function drawList(rows, waiting, refused, away, awayFix) {
+// The list's heading: the day between the arrows, and on an earlier day Back to today and the read-only box (022, R96, R78).
+function renderDayHead(day, today, locked, nrows) {
+  var past = day !== today;
+  listHeadDay = day;
+  el('daytitle').textContent = (past ? '' : 'Today · ') + weekday(day) + ' ' + usDate(day);
+  el('dayprev').disabled = !listFirstDay || day <= listFirstDay;
+  el('daynext').disabled = !past;
+  el('daytoday').hidden = !past;
+  el('dayro').hidden = !past || !nrows;     // an empty earlier day: nothing to change, no box (022-3; Agent Y, 11)
+  el('dayrotext').textContent = locked ? 'Read only. Tap Edit to change an entry on this day.'
+                                       : 'You can change entries on this day: tap one, then Change this entry.';     // G022-4
+  el('dayedit').hidden = !locked;
+}
+function drawList(rows, waiting, refused, away, awayFix, past, locked, day) {
   var box = el('today');
   box.textContent = '';
-  if (away) box.appendChild(listDiv('away', 'The entry you just ' + (awayFix ? 'changed' : 'saved') + ' belongs to ' + weekday(away) + ' ' + usDate(away) + ', so it is not in today’s list. Each day in the list runs from 5:00 AM to 5:00 AM.'));
+  box.classList.toggle('past', !!past);
+  if (away) box.appendChild(listDiv('away', awayFix ? 'The entry you just changed is on ' + weekday(away) + ' ' + usDate(away) + ', not today; the ‹ arrow shows that day.'     // 022-3; Agent Y, 7
+                                                    : 'The entry you just saved belongs to ' + weekday(away) + ' ' + usDate(away) + ', so it is not in today’s list. Each day in the list runs from 5:00 AM to 5:00 AM.'));
   var hint = document.querySelector('.listhint');
-  if (hint) hint.hidden = !rows.length;           // no hint over an empty list (Agent W, N8)
-  if (!rows.length) { box.appendChild(listDiv('empty', 'Nothing saved yet today.')); return; }
+  if (hint) hint.hidden = !rows.length || !!past;      // no hint over an empty list (Agent W, N8), nor on an earlier day, where the grey box says it (022)
+  if (!rows.length) { box.appendChild(listDiv('empty', past ? 'Nothing saved on this day.' : 'Nothing saved yet today.')); return; }
   var flash = state.flash && Date.now() < state.flash.until ? state.flash.id : null;
   rows.forEach(function (v) {
     var f = v.fields || {}, parts = listParts(f);
@@ -1956,7 +2038,7 @@ function drawList(rows, waiting, refused, away, awayFix) {
     parts.words.forEach(function (w) { body.appendChild(listDiv('ew', w[0] + '“' + String(w[1]) + '”')); });
     if (parts.marks.length) body.appendChild(listDiv('em', parts.marks.join(' · ')));
     var ch = listChanged[v.id];
-    if (ch) body.appendChild(listDiv('en chg', 'changed ' + whenOf(ch.date, ch.time, dateStr(new Date()))));     // R89
+    if (ch) body.appendChild(listDiv('en chg', 'changed ' + whenOf(ch.date, ch.time, past ? day : dateStr(new Date()))));     // R89; with its date on an earlier day (022-3; Agent Y, 6)
     if (refused[v.id]) body.appendChild(listDiv('en bad', 'The sheet did not accept this'));
     else if (waiting[v.id]) body.appendChild(listDiv('en wait', 'waiting to send'));
     if (armedId === v.id) {
@@ -2178,7 +2260,7 @@ function render() {
   if (away) {
     var fa = fixScreenOf(state.fix);
     el('fixaway').textContent = 'You are changing your ' + fa + ' entry of ' + fwhen + '. Tap ' + fa +
-                                ' at the top to save the changes or cancel them. Today’s list comes back after that.';
+                                ' at the top to save the changes or cancel them. The list comes back after that.';
   }
   document.body.classList.toggle('fixing', fixing);          // pale yellow while changing (020, R93)
   el('save').textContent = fixing ? 'Save changes to ' + (isHM(state.fix.orig['Time']) ? ampm(state.fix.orig['Time']) + ' ' : '') + 'entry' : 'Save';
@@ -2414,7 +2496,7 @@ function renderWhen() {
   el('whendate').textContent = weekday(shown.date) + ' ' + usDate(shown.date) + ' · ';
   el('whentime').textContent = ampm(shown.time);
   var ld = logDayOf(shown.date, shown.time);
-  var notToday = !!dr.fixed && ld !== currentLogDay();     // a half-filled screen from an earlier day (Agent Q, W5)
+  var notToday = !!dr.fixed && ld !== currentLogDay() && !earlierFixDay();     // a half-filled screen from an earlier day (Agent Q, W5); not an earlier day's entry being changed (022)
   var note = el('daynote');
   if (ld !== shown.date || notToday) {
     note.hidden = false;
@@ -2875,11 +2957,30 @@ function showError(text) {
 }
 
 // Edit: the number pad, then AM or PM (R65 as changed)
+// The earlier day of the entry being changed on this screen, if it is one (022): its Edit keeps it on that day (R97).
+function earlierFixDay() {
+  if (!fixOn(state.screen)) return null;
+  var d = state.fix.orig['Log day'];
+  return isDay(d) && d < currentLogDay() ? d : null;
+}
+// A time typed for an entry of an earlier day: on that day, before 5:00 AM the early morning after it (R75, R97).
+function timeOnDay(four, day) {
+  var H = Number(four.slice(0, 2)), M = Number(four.slice(2, 4));
+  if (H > 23 || M > 59) return null;
+  var time = p2(H) + ':' + p2(M);
+  var date = H < DAY_STARTS_AT ? dayAfter(day) : day;
+  var t = momentOf(date, time);
+  if (timeStr(t) !== time || dateStr(t) !== date) return { skipped: true };     // a time the clocks skipped that night (022-3; Agent Y, 3)
+  var later = new Date(t.getTime() + 3600000);
+  if (timeStr(later) === time && dateStr(later) === date) t = later;            // the hour that repeats: the later one, as editedTime (Agent Y, 2)
+  return { date: date, time: time, at: t.getTime() };
+}
 function openPad() {
   closeTpad();
   el('pad').hidden = false;
   el('padinput').value = '';
-  el('padmsg').textContent = 'Type the time, like 205 or 1130, then tap AM or PM.';
+  var ed = earlierFixDay();
+  el('padmsg').textContent = 'Type the time, like 205 or 1130, then tap AM or PM.' + (ed ? ' It stays on ' + weekday(ed) + ' ' + usDate(ed) + '.' : '');
   el('padmsg').className = 'padmsg';
   el('padinput').focus();
 }
@@ -2887,7 +2988,13 @@ function closePad() { el('pad').hidden = true; }
 function padShowing(id) { var p = el(id); return !p.hidden && p.offsetParent !== null; }
 function setFromPad(half) {
   var four = typedTime(el('padinput').value.trim(), half);
-  var got = four ? editedTime(four, new Date()) : null;
+  var ed = earlierFixDay();
+  var got = four ? (ed ? timeOnDay(four, ed) : editedTime(four, new Date())) : null;
+  if (got && got.skipped) {
+    el('padmsg').textContent = 'There was no ' + ampm(four.slice(0, 2) + ':' + four.slice(2)) + ' that night: the clocks went forward an hour. Type another time.';
+    el('padmsg').className = 'padmsg bad';
+    return;
+  }
   if (!got) {
     el('padmsg').textContent = 'Not a time. Type it like 205 or 1130, then tap AM or PM.';
     el('padmsg').className = 'padmsg bad';
@@ -2924,7 +3031,9 @@ function showScreen(s) {
 function wire() {
   // First of all: taps in the screen just after it jumped are dropped (019-2; Agent W, W1).
   document.addEventListener('click', function (e) {
-    if (Date.now() >= tapShield) return;
+    var now = Date.now();
+    if (tapShield - now > 5 * TAP_SHIELD_MS) tapShield = 0;     // the phone's clock was set back: no long shield (022-3; Agent Y, 8)
+    if (now >= tapShield) return;
     var t = e.target;
     if (t && t.closest && t.closest('main')) { e.stopImmediatePropagation(); e.preventDefault(); }
   }, true);
@@ -2937,13 +3046,30 @@ function wire() {
     var row = t && t.closest ? t.closest('.entry') : null;
     if (!row || !row.getAttribute('data-id')) return;
     var id = row.getAttribute('data-id');
+    if (dayLocked()) return;                                   // an earlier day is read only until Edit (R78; 022)
     shieldTaps(TAP_SHIELD_MS);
     if (t.closest('.chgbtn')) {
-      if (Date.now() - armedAt < ARMED_MS) return;             // the button only just appeared under his finger (020-2)
+      var since = Date.now() - armedAt;
+      if (since >= 0 && since < ARMED_MS) return;                   // (a clock set back since: no wait, 022-3)             // the button only just appeared under his finger (020-2)
       armedId = null; openFix(id); return;
     }
     armedId = armedId === id ? null : id;
     armedAt = Date.now();
+    refreshList();
+  });
+  // Earlier days (022, R96): the arrows step a day at a time; Edit unlocks the day shown (R78).
+  el('dayprev').addEventListener('click', function () {
+    var d = dayBefore(shownDay());
+    if (!listFirstDay || d < listFirstDay) return;
+    showDay(d);
+  });
+  el('daynext').addEventListener('click', function () { if (shownDay() !== currentLogDay()) showDay(dayAfter(shownDay())); });
+  el('daytoday').addEventListener('click', function () { showDay(null); });
+  el('dayedit').addEventListener('click', function () {
+    var d = shownDay();
+    if (d === currentLogDay() || d !== listHeadDay) return;          // only the day he sees (022-3)
+    listEditDay = d;
+    shieldTaps(TAP_SHIELD_MS);      // the box changes under his finger
     refreshList();
   });
   el('undo').addEventListener('click', undo);
@@ -3048,7 +3174,7 @@ function wire() {
     if (!cur().fixed) renderWhen();
     if (b && barGone(b) && !el('savedbar').hidden) render();
     var d = currentLogDay();
-    if (d !== lastDay) { lastDay = d; refreshDone(); render(); }
+    if (d !== lastDay) { lastDay = d; armedId = null; refreshDone(); render(); }     // the Change button goes at 5:00 AM (022-3)
   }, 10000);
   // Anything waiting is tried again every minute while the page is open.
   setInterval(function () { if (state.anyWaiting) kick(); }, 60000);

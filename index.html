@@ -166,10 +166,13 @@
   <!-- A Morning or Evening entry being changed while Intraday shows (increment 021, G021-2) -->
   <div id="fixaway" class="fixaway" hidden></div>
 
-  <!-- Today's list (increment 018; approved mockup round 2, picture 4; R34, R43, G11, G24, R86, R87) -->
+  <!-- Today's list (increment 018; approved mockup round 2, picture 4; R34, R43, G11, G24, R86, R87).
+       From 022 the arrows on its heading show earlier days in the same spot (R64, R73, R78, R96). -->
   <section id="else" class="else" hidden>
     <div class="elsehead">Everything else</div>
-    <h3>Today so far, newest first</h3>
+    <div class="dayhead"><button type="button" id="dayprev" class="dayarrow" aria-label="The day before">&#8249;</button><b id="daytitle"></b><button type="button" id="daynext" class="dayarrow" aria-label="The day after">&#8250;</button></div>
+    <button type="button" id="daytoday" class="btn wide daytoday" hidden>Back to today</button>
+    <div id="dayro" class="dayro" hidden><span id="dayrotext"></span><button type="button" id="dayedit" class="btn">Edit</button></div>
     <div class="listhint">Tap an entry to add words or change it.</div>
     <div id="today" class="list"></div>
   </section>

@@ -160,6 +160,15 @@ h3 { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.06em; color
 .fixbanner b { color: var(--accent); }
 .fixhelp { font-size: 13.5px; color: var(--muted); margin-top: 2px; }
 .btn.wide { display: block; width: calc(100% - 24px); margin: 8px 12px 0; padding: 12px; text-align: center; font-size: 16px; }
+/* Earlier days (022, R96): arrows on the list's heading, Back to today, the read-only box */
+.dayhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 6px 12px 8px; }
+.dayhead b { font-size: 17px; text-align: center; }
+.dayarrow { font-size: 26px; line-height: 1; padding: 4px 16px; border: 1px solid var(--accent); border-radius: 10px; background: #fff; color: var(--accent); font-weight: 700; }
+.dayarrow:disabled { border-color: #ccc; color: #ccc; }
+.daytoday { display: block; margin: 0 12px 8px; width: calc(100% - 24px); }
+.dayro { display: flex; align-items: center; gap: 10px; margin: 0 12px 8px; padding: 8px 10px; border-radius: 10px; background: #eceff3; font-size: 14px; color: #444; }
+.dayro span { flex: 1; }
+.list.past .entry { color: #555; }
 .listhint { margin: -2px 12px 6px; font-size: 13px; color: var(--muted); }
 .entry { cursor: pointer; }
 .en.chg { color: var(--muted); }

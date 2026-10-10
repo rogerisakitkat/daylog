@@ -6,7 +6,7 @@
  * comes back even with the page closed, where Chrome allows it.
  * Changing VERSION is what makes Chrome fetch a new version of the page.
  */
-var VERSION = '021-3';
+var VERSION = '022-4';
 var CACHE = 'daylog-' + VERSION;
 var FILES = ['./', 'index.html', 'app.js', 'send.js', 'style.css', 'manifest.webmanifest',
              'icon-192.png', 'icon-512.png', 'icon-maskable-512.png'];
