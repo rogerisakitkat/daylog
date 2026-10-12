@@ -130,8 +130,28 @@
  * typed on My usual ones is kept in memory only (G025-1).
  * 025-2: nothing of his in these files (D93): no medicine name, recipe, dose or usual-one ID in comments or examples; the
  * old single "usualsSent" flag counts for version 1 of a usual one without "savedAt" (the ones pages 004 to 012 wrote).
+ * 026 (2026-10-12): a usual shake or medicine set changed for one entry (R53, R68, G38; round 3 pictures 4 and 5; D180 to
+ * D184). Under the ticked usual one, "Change this shake" ("Change this set") opens one row per item with a box for its
+ * amount and Leave out / Put back; shakes also have Half (half of the usual amounts, G026-1); Back to usual puts it all
+ * back and closes the rows. Save records the name, what was in it this time ("<kind> contents") and what was different
+ * ("<kind> changed", G026-7), columns the sheet has had since 001. The change lasts for that entry only. Kept in the
+ * half-filled screen's Shake or Medicine part as chg { id, base, rows } (the usual one's ID and rows when Change was
+ * tapped, and the amount and left-out mark of each row) and touched; page 025-2 (the way back) ignores both and saves
+ * the usual one unchanged. On the yellow screen an entry recorded with a change opens with its rows; the entry keeps
+ * exactly what it recorded unless its rows are touched.
+ * 026-2 (Agent AC): an entry recorded with a change is kept as recorded only while its rows are shown, or when they cannot
+ * be shown on the usual one as it is now, in which case the screen says what it recorded (W2, W6); such an entry's Save
+ * changes is never stopped by its rows (W1); a stored change with gaps in its lists, or that cannot be read back, is
+ * dropped, keeping a changed entry as recorded (W3, W4); a change left open while that usual one is changed in My usual
+ * ones is taken off with a red line (W5); long names wrap (W7); amounts in plain form, Put back and Half on an item at 0,
+ * Half of very small amounts (N1, N3, N4, N9).
+ * 026-3 (Agent AC's recheck): the red line about a change taken off only when a change of his is lost (R-W1); plain-form
+ * amounts never in exponent form (R-W2); on the yellow screen a change taken off leaves the entry as recorded (R-N1); a
+ * kept change compared with its usual one by What, Amount and Unit only (R-N2).
+ * 026-4 (Agent AC's second recheck, R2-W1): Half worked out exactly on the digits, then rounded half-up to 3 decimals
+ * unless that gives 0, when the exact half is kept.
  */
-var PAGE_VERSION = '025-2';
+var PAGE_VERSION = '026-4';
 var SCREENS = ['Morning', 'Intraday', 'Evening'];
 var SCORE_ROWS = ['Mind', 'Body', 'Balance'];
 var MORNING_SCORES = [{ label: 'Quality', key: 'Sleep quality' }, { label: 'Amount', key: 'Sleep amount' }];
@@ -166,6 +186,7 @@ var USUAL_NAME_TYPED_MAX = 60;
 var ITEMS_MAX = 30;
 var ITEM_TEXT_MAX = 200;
 var AMOUNT_RE = /^(\d+(\.\d+)?|\.\d+)$/;
+var AMOUNT_TYPED_MAX = 10;          // an amount typed for one entry (026)
 var REMOVED_MAX = 1000;
 // The usual ones first written into phones by pages 004 to 012 have no "savedAt"; their version 1 was marked sent by
 // pages up to 007-3 with one flag for both ("usualsSent-real"), which counts only for them (025-2). Every usual one made
@@ -334,6 +355,14 @@ function fillDraft(d) {
   if (d.coffee === true && !d.liquids) d.liquids = { coffee: true, water: false, other: false, what: '' };
   delete d.coffee;
   if (d.liquids && typeof d.liquids !== 'object') d.liquids = null;
+  // 026: a change for one entry kept in a shape this page cannot use is dropped; the pick stays.
+  USUAL_KINDS.forEach(function (kind) {
+    var p = d[kind];
+    if (!isObj(p)) return;
+    if (p.chg !== undefined && p.chg !== null && !chgOk(p.chg)) { delete p.chg; delete p.touched; p.chgLost = true; }
+    if (p.touched !== undefined && typeof p.touched !== 'boolean') delete p.touched;
+    if (p.chgLost !== undefined && p.chgLost !== true) delete p.chgLost;
+  });
   return d;
 }
 function otherTicked(dr) {
@@ -937,7 +966,13 @@ function fieldsFor(dr, savedAt) {
     var usual = USUALS[kind].filter(function (u) { return u.name === pick.pick; })[0];
     if (usual) {
       f[kind] = usual.name;
-      f[kind + ' contents'] = usual.contents;
+      var cx = cxResult(kind, pick);              // changed for this entry only (026, G026-7)
+      if (cx && cx.contents !== undefined) {
+        f[kind + ' contents'] = cx.contents;
+        f[kind + ' changed'] = cx.changed;
+      } else {
+        f[kind + ' contents'] = usual.contents;
+      }
     } else {
       f[kind] = SOMETHING_ELSE;
       if (hasText(pick.what)) f[kind + ' contents'] = pick.what;
@@ -1030,9 +1065,9 @@ function summary(f) {
     if (f['Day notable'] === 'Yes') bits.push('day notable');
     return 'Evening: ' + bits.join(', ');
   }
-  if (f['Shake'] !== undefined) bits.push('Shake · ' + f['Shake']);
+  if (f['Shake'] !== undefined) bits.push('Shake · ' + f['Shake'] + (f['Shake changed'] !== undefined ? ' changed' : ''));
   if (f['Workout'] !== undefined && f['Workout ended'] === undefined) bits.push(f['Workout'] + ' started');
-  if (f['Medicine'] !== undefined) bits.push('Medicine · ' + f['Medicine']);
+  if (f['Medicine'] !== undefined) bits.push('Medicine · ' + f['Medicine'] + (f['Medicine changed'] !== undefined ? ' changed' : ''));
   var liq = LIQUIDS.filter(function (l) { return f[l.column] === 'Yes'; }).map(function (l) { return l.name; });
   // "Coffee, Water and Something else", so Food and Other after it do not read as drinks (Agent C, W1).
   if (liq.length) bits.push('Liquids · ' + (liq.length === 1 ? liq[0] : liq.slice(0, -1).join(', ') + ' and ' + liq[liq.length - 1]));
@@ -1090,6 +1125,7 @@ function save() {
     return;
   }
   if (screen === 'Intraday' && unpickedKind(dr)) { showNote(PICK_NOTE[unpickedKind(dr)]); return; }     // 025, D173
+  if (screen === 'Intraday' && cxStop(dr)) { showNote(cxStop(dr)); return; }                             // 026
   // A walk or workout running that could not be read is never written over (015).
   if (screen === 'Intraday' && dr.workout && dr.workout.kind && state.unread.running) {
     showError('This phone could not read whether a walk or workout is already running, so a new one can’t be started just now. ' +
@@ -1367,7 +1403,8 @@ function undo() {
 // Every key fieldsFor() can write; any other part of the entry is kept as it was
 // (for example "Workout ended").
 var MADE_BY_SCREEN = ['Log day', 'Time', 'Screen', 'Mind', 'Body', 'Balance', 'Comments', 'Notable', 'Notable why', 'Personal',
-                      'Shake', 'Shake contents', 'Medicine', 'Medicine contents', 'Workout', 'Coffee', 'Water', 'Other liquid',
+                      'Shake', 'Shake contents', 'Shake changed', 'Medicine', 'Medicine contents', 'Medicine changed',
+                      'Workout', 'Coffee', 'Water', 'Other liquid',
                       'Other liquid, what', 'Food or snack', 'Food or snack, what', 'Other', 'Shower', 'Alcohol', 'Chores',
                       'Calendar date', 'UTC offset', 'Saved at'];
 function versionsRange(id) { return IDBKeyRange.bound(id + ':', id + ':￿'); }
@@ -1394,6 +1431,11 @@ function fixDraftFrom(f) {
   USUAL_KINDS.forEach(function (kind) {
     if (typeof f[kind] !== 'string') return;
     d[kind] = { pick: f[kind], what: f[kind] === SOMETHING_ELSE && typeof f[kind + ' contents'] === 'string' ? f[kind + ' contents'] : '' };
+    // 026: recorded with a change for that entry: its rows open, mapped onto the usual one as it is now.
+    if (f[kind] !== SOMETHING_ELSE && f[kind + ' changed'] !== undefined) {
+      var m = cxFromRecorded(kind, f[kind], f[kind + ' contents']);
+      if (m && !cxSame(m)) d[kind].chg = m;
+    }
   });
   if (typeof f['Workout'] === 'string') d.workout = { kind: f['Workout'] };
   var lq = { coffee: f['Coffee'] === 'Yes', water: f['Water'] === 'Yes', other: f['Other liquid'] === 'Yes',
@@ -1460,11 +1502,13 @@ function fixFields(fx, now) {
     return g;
   }
   var f = fieldsFor(fx.dr, now), o = fx.orig;
-  // A shake or medicine kept as recorded keeps what was recorded with it (G40).
+  // A shake or medicine kept as recorded keeps what was recorded with it (G40), with what was different
+  // that time, unless its rows were touched here (026).
   USUAL_KINDS.forEach(function (kind) {
-    if (fx.dr[kind] && typeof o[kind] === 'string' && o[kind] !== SOMETHING_ELSE && fx.dr[kind].pick === o[kind]) {
+    if (keptAsRecorded(fx, kind)) {
       f[kind] = o[kind];
       if (o[kind + ' contents'] !== undefined) f[kind + ' contents'] = o[kind + ' contents']; else delete f[kind + ' contents'];
+      if (o[kind + ' changed'] !== undefined) f[kind + ' changed'] = o[kind + ' changed']; else delete f[kind + ' changed'];
     }
   });
   // The time not changed: the date and offset stay exactly as recorded.
@@ -1637,6 +1681,7 @@ function saveFix() {
     return;
   }
   if (scr === 'Intraday' && unpickedKind(dr)) { showNote(PICK_NOTE[unpickedKind(dr)]); return; }     // 025, D173
+  if (scr === 'Intraday' && cxStop(dr, fx)) { showNote(cxStop(dr, fx)); return; }                        // 026
   var walk = scr === 'Intraday' && fx.orig['Workout'] !== undefined;
   if (walk && state.unread.running) {
     showError('This phone could not read whether a walk or workout is running, so this one can’t be changed just now. ' +
@@ -1934,6 +1979,370 @@ function usualsNote(kind) {
   return { why: 'none',
            text: 'No usual ' + (kind === 'Shake' ? 'shake' : 'medicine') + ' is stored on this phone, so only Something else is offered. ' +
                  'Type what you had.' };
+}
+
+
+// ------------------------------------------------------------------ a usual one changed for one entry (026)
+
+var CX_WORDS = { Shake: { btn: 'Change this shake', reads: 'This shake:', changed: 'Changed for this shake:', list: 'changed for this shake: ' },
+                 Medicine: { btn: 'Change this set', reads: 'This time:', changed: 'Changed this time:', list: 'changed this time: ' } };
+var CX = {};                      // the drawn parts, for Shake and Medicine
+function usualOf(kind, name) {
+  if (typeof name !== 'string' || name === SOMETHING_ELSE) return null;
+  return USUALS[kind].filter(function (u) { return u.name === name; })[0] || null;
+}
+function dense(a) {
+  if (!Array.isArray(a)) return false;
+  for (var i = 0; i < a.length; i++) if (!(i in a)) return false;
+  return true;
+}
+function chgOk(c) {
+  return isObj(c) && typeof c.id === 'string' && dense(c.base) && itemsOk(c.base) && dense(c.rows) && c.rows.length === c.base.length &&
+         c.rows.every(function (r) { return isObj(r) && typeof r.amount === 'string' && r.amount.length <= 40 && typeof r.out === 'boolean'; });
+}
+// The change kept for this pick, if it belongs to the usual one picked (by its ID, so a rename keeps it).
+function cxOf(kind, p) {
+  if (!p || !p.chg || !chgOk(p.chg)) return null;
+  var u = usualOf(kind, p.pick);
+  return u && u.id === p.chg.id ? p.chg : null;
+}
+// A valid amount in plain form, digits kept as typed: 040 -> 40, .5 -> 0.5, 30.50 -> 30.5 (AC-N1), never "1e-7" (AC-R-W2).
+function plainDigits(i, f) {
+  i = (i || '0').replace(/^0+(?=\d)/, '');
+  f = (f || '').replace(/0+$/, '');
+  return f ? i + '.' + f : i;
+}
+function amountNorm(a) {
+  a = String(a).trim();
+  if (!AMOUNT_RE.test(a)) return a;
+  var m = /^(\d*)(?:\.(\d+))?$/.exec(a);
+  return plainDigits(m[1], m[2]);
+}
+function sameAmount(a, b) { return a === b || (a !== '' && b !== '' && AMOUNT_RE.test(a) && AMOUNT_RE.test(b) && Number(a) === Number(b)); }
+// Half of a usual amount, worked out on its digits (exact: 0.0003 -> 0.00015, AC-R2-W1), rounded half-up to at most
+// 3 decimals (G026-1), unless that gives 0 (AC-N9), when the exact half is kept.
+function halfExact(a) {
+  var p = amountNorm(a).split('.'), i = p[0], digits = i + (p[1] || '') + '0', out = '', r = 0;
+  for (var k = 0; k < digits.length; k++) {
+    var d = r * 10 + Number(digits.charAt(k));
+    out += String(Math.floor(d / 2));
+    r = d % 2;
+  }
+  return plainDigits(out.slice(0, i.length), out.slice(i.length));
+}
+function round3(s) {
+  var p = s.split('.'), f = p[1] || '';
+  if (f.length <= 3) return s;
+  var arr = (p[0] + f.slice(0, 3)).split(''), up = Number(f.charAt(3)) >= 5, k = arr.length - 1;
+  while (up && k >= 0) {
+    if (arr[k] === '9') { arr[k] = '0'; k--; } else { arr[k] = String(Number(arr[k]) + 1); up = false; }
+  }
+  var digits = (up ? '1' : '') + arr.join(''), il = digits.length - 3;
+  return plainDigits(digits.slice(0, il), digits.slice(il));
+}
+function halfOf(a) {
+  if (!AMOUNT_RE.test(String(a).trim())) return a;
+  var e = halfExact(a), r = round3(e);
+  return r === '0' && e !== '0' ? e : r;
+}
+function isZero(a) { return a !== '' && AMOUNT_RE.test(a) && Number(a) === 0; }       // 0 counts as left out (G026-3)
+// Rows as the usual one has them, nothing changed.
+function cxSame(c) {
+  return c.rows.every(function (r, i) { return !r.out && sameAmount(amountNorm(r.amount), c.base[i].amount); });
+}
+// What the rows add up to: null when they read as the usual one (G026-5); { bad } when Save must stop (G026-2,
+// G026-4); else { contents, changed } for the sheet (G026-7).
+function cxResult(kind, p) {
+  var c = cxOf(kind, p);
+  if (!c) return null;
+  var kept = [], diffs = [], outs = [], half = kind === 'Shake', anyNum = false;
+  for (var i = 0; i < c.base.length; i++) {
+    var b = c.base[i], r = c.rows[i], a = amountNorm(r.amount);
+    if (!r.out && a !== '' && !AMOUNT_RE.test(a)) return { bad: 'The amount for ' + b.what + ' is not a number. Type it like 30 or 1.5, or tap Back to usual.' };
+    if (!r.out && a === '' && b.amount !== '') return { bad: 'The amount for ' + b.what + ' is empty. Type an amount, tap Leave out, or tap Back to usual.' };
+    if (r.out || isZero(a)) { outs.push('no ' + b.what); continue; }
+    var it = { what: b.what, amount: a, unit: b.unit };
+    kept.push(it);
+    if (!sameAmount(a, b.amount)) diffs.push(itemText(kind, it));
+    if (b.amount === '') { if (a !== '') half = false; }
+    else { anyNum = true; if (Number(a) !== Number(halfOf(b.amount))) half = false; }
+  }
+  if (!kept.length) return { bad: 'Everything in ' + p.pick + ' is left out. Tap ' + kind + ' again to take it off instead, or tap Put back.' };
+  if (!diffs.length && !outs.length) return null;
+  var changed = (half && anyNum && diffs.length ? ['half'] : diffs).concat(outs).join('; ');
+  return { contents: contentsOf(kind, kept), changed: changed };
+}
+function cxStop(dr, fx) {
+  for (var i = 0; i < USUAL_KINDS.length; i++) {
+    if (fx && keptAsRecorded(fx, USUAL_KINDS[i])) continue;      // saved as the entry recorded it (AC-W1)
+    var r = cxResult(USUAL_KINDS[i], dr[USUAL_KINDS[i]]);
+    if (r && r.bad) return r.bad;
+  }
+  return '';
+}
+// The amount in one recorded part for a row, or null if the part is not that row.
+function escRe(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+function amountIn(kind, b, part) {
+  var num = '(\\d+(?:\\.\\d+)?|\\.\\d+)';
+  var bits = kind === 'Medicine' ? [escRe(b.what), num, escRe(b.unit)] : [num, escRe(b.unit), escRe(b.what)];
+  var m = new RegExp('^' + bits.filter(function (x) { return x !== ''; }).join(' ') + '$').exec(part);
+  if (m) return m[1];
+  return itemText(kind, { what: b.what, amount: '', unit: b.unit }) === part ? '' : null;
+}
+// Rows for a recorded line, on the usual one as it is now: each recorded part in order on the next row it reads as,
+// rows with no part left out. Null if the line cannot be read that way.
+function cxFromRecorded(kind, name, contents) {
+  var u = usualOf(kind, name);
+  if (!u || typeof contents !== 'string' || contents === '') return null;
+  var base = rowsOf(kind, u);
+  if (!itemsOk(base)) return null;
+  if (contents === u.contents) return { id: u.id, base: base, rows: base.map(function (b) { return { amount: b.amount, out: false }; }) };
+  var parts = contents.split(', '), j = 0;
+  var rows = base.map(function (b) {
+    if (j < parts.length) {
+      var a = amountIn(kind, b, parts[j]);
+      if (a === '' && b.amount !== '') a = null;          // recorded with no amount; the row now has one (AC-W1)
+      if (a !== null) { j++; return { amount: a, out: false }; }
+    }
+    return { amount: b.amount, out: true };
+  });
+  return j === parts.length ? { id: u.id, base: base, rows: rows } : null;
+}
+// Change tapped: the rows of the usual one picked; on the yellow screen, from what the entry recorded when it can be read
+// that way (plan point 6).
+function cxStart(kind, p) {
+  var u = usualOf(kind, p.pick);
+  if (!u) return null;
+  var fx = fixOn('Intraday') ? state.fix : null;
+  if (fx && fx.orig[kind] === p.pick && p.touched !== true) {
+    var m = cxFromRecorded(kind, p.pick, fx.orig[kind + ' contents']);
+    if (m) return m;
+  }
+  var base = rowsOf(kind, u);
+  if (!itemsOk(base)) return null;
+  return { id: u.id, base: base, rows: base.map(function (b) { return { amount: b.amount, out: false }; }) };
+}
+// On the yellow screen: is this kind saved exactly as the entry recorded it? Its pick as recorded and its rows not
+// touched, and either it recorded no change (G40), or its recorded change is what the rows show, or the rows cannot show
+// it (could not be read back, AC-W4; or do not fit the usual one as it is now, AC-W6). A recorded change whose rows were
+// closed by another pick or by Shake off and on is not kept: what the screen shows is saved (AC-W2).
+function recordedRows(kind, o) { var m = cxFromRecorded(kind, o[kind], o[kind + ' contents']); return m && !cxSame(m) ? m : null; }
+function keptAsRecorded(fx, kind) {
+  var o = fx.orig, p = fx.dr && fx.dr[kind];
+  if (!p || typeof o[kind] !== 'string' || o[kind] === SOMETHING_ELSE || p.pick !== o[kind] || p.touched === true) return false;
+  if (o[kind + ' changed'] === undefined) return true;
+  if (cxOf(kind, p) || p.chgLost === true) return true;
+  return !recordedRows(kind, o);
+}
+// A change kept for a usual one that has since been changed in My usual ones (here or in another open copy) no longer
+// fits its rows: it is taken off, with a red line if something was changed (AC-W5). On the yellow screen, untouched,
+// the entry is then kept as recorded.
+function cxSettle() {
+  if (state.reading || !state.loaded) return;
+  var fx = fixOn('Intraday') ? state.fix : null;
+  [[state.draft, false], [fx ? fx.dr : null, true]].forEach(function (x) {
+    var dr = x[0];
+    if (!dr) return;
+    USUAL_KINDS.forEach(function (kind) {
+      var p = dr[kind];
+      if (!p || !p.chg || !chgOk(p.chg)) return;
+      var u = usualOf(kind, p.pick);
+      if (!u) return;                     // not in use here (or not read yet): the change is not used, and kept
+      var same = u.id === p.chg.id;
+      var wau = function (l) { return JSON.stringify(l.map(function (b) { return [b.what, b.amount, b.unit]; })); };
+      if (same && wau(rowsOf(kind, u)) === wau(p.chg.base)) return;            // AC-R-N2
+      // Something of his is lost only if he changed it: on the yellow screen an untouched change is the entry's own,
+      // which stays as recorded (AC-R-W1).
+      var lost = same && !cxSame(p.chg) && (!x[1] || p.touched === true);
+      delete p.chg;
+      if (x[1]) { p.chgLost = true; delete p.touched; }                          // the entry as recorded (AC-R-N1)
+      if (lost) {
+        showError('Your change to ' + u.name + ' for this ' + (kind === 'Shake' ? 'shake' : 'entry') + ' was taken off, because ' + u.name +
+                  ' was changed in My usual ones. Make it again if you need to.');
+      }
+      storeDraft(true);
+    });
+  });
+}
+function buildCx(kind) {
+  var w = {}, mk = function (tag, cls, id, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (id) e.id = id;
+    if (text) e.textContent = text;
+    if (tag === 'button') e.type = 'button';
+    return e;
+  };
+  w.wrap = mk('div', 'cx', 'cx-' + kind); w.wrap.hidden = true;
+  w.btn = mk('button', 'btn cxbtn', 'cb-' + kind, CX_WORDS[kind].btn);
+  w.body = mk('div', 'cxbody', 'cxb-' + kind);
+  w.rows = mk('div', '', 'cxr-' + kind);
+  var two = mk('div', 'cxtwo');
+  w.half = mk('button', 'btn', 'cxh-' + kind, 'Half');
+  w.back = mk('button', 'btn cxback', 'cxu-' + kind, 'Back to usual');
+  if (kind === 'Shake') two.appendChild(w.half);           // no Half for medicine (drawing 4)
+  two.appendChild(w.back);
+  w.reads = mk('div', 'cxl', 'cxl-' + kind);
+  w.chg = mk('div', 'cxl', 'cxd-' + kind);
+  w.hint = mk('div', 'cxhint', 'cxn-' + kind);
+  [w.rows, two, w.reads, w.chg, w.hint].forEach(function (e) { w.body.appendChild(e); });
+  w.rec = mk('div', 'cxl cxrec', 'cxrec-' + kind); w.rec.hidden = true;
+  w.wrap.appendChild(w.btn); w.wrap.appendChild(w.rec); w.wrap.appendChild(w.body);
+  w.sig = '';
+  CX[kind] = w;
+  var mine = function () { var p = idr()[kind]; return p && usualOf(kind, p.pick) ? p : null; };
+  w.btn.addEventListener('click', function () {
+    var p = mine();
+    if (!p) return;
+    touch();
+    var c = cxOf(kind, p);
+    if (!c) {
+      var s = cxStart(kind, p);
+      if (!s) return;
+      p.chg = s;
+    } else if (cxSame(c)) {
+      delete p.chg;                       // nothing changed: closes
+    } else {
+      showNote('To undo the change, tap Back to usual.');     // a change stays open (G026-6)
+      return;
+    }
+    storeDraft(true);
+    render();
+  });
+  w.half.addEventListener('click', function () {
+    var p = mine(), c = p && cxOf(kind, p);
+    if (!c) return;
+    touch();
+    c.rows.forEach(function (r, i) { if (c.base[i].amount !== '' && !isZero(amountNorm(r.amount))) r.amount = halfOf(c.base[i].amount); });
+    p.touched = true;
+    storeDraft(true);
+    render();
+  });
+  w.back.addEventListener('click', function () {
+    var p = mine();
+    if (!p) return;
+    touch();
+    delete p.chg;
+    p.touched = true;
+    storeDraft(true);
+    render();
+  });
+  w.rows.addEventListener('input', function (e) {
+    var p = mine(), c = p && cxOf(kind, p), i = Number(e.target.getAttribute('data-i'));
+    if (!c || !c.rows[i]) return;
+    touch();
+    c.rows[i].amount = e.target.value;
+    p.touched = true;
+    w.rec.hidden = true;                  // touched: no longer kept as recorded (026-2)
+    storeDraft(false);
+    cxLines(kind, p);
+  });
+  w.rows.addEventListener('click', function (e) {
+    var b = e.target && e.target.closest ? e.target.closest('button.cxlo') : null;
+    var p = mine(), c = p && cxOf(kind, p), i = b ? Number(b.getAttribute('data-i')) : -1;
+    if (!b || !c || !c.rows[i]) return;
+    touch();
+    c.rows[i].out = !c.rows[i].out;
+    if (!c.rows[i].out && isZero(amountNorm(c.rows[i].amount))) c.rows[i].amount = c.base[i].amount;     // AC-N3
+    p.touched = true;
+    storeDraft(true);
+    render();
+  });
+}
+function cxBuildRows(kind, c) {
+  var w = CX[kind];
+  w.rows.textContent = '';
+  c.base.forEach(function (b, i) {
+    var r = c.rows[i];
+    var row = document.createElement('div');
+    row.className = 'cxrow ' + (kind === 'Medicine' ? 'med' : 'shk') + (r.out ? ' out' : '');
+    var inp = document.createElement('input');
+    inp.type = 'text';
+    inp.className = 'cxin';
+    inp.setAttribute('inputmode', 'decimal');
+    inp.setAttribute('autocomplete', 'off');
+    inp.setAttribute('maxlength', String(AMOUNT_TYPED_MAX));
+    inp.setAttribute('data-i', String(i));
+    inp.setAttribute('aria-label', 'Amount of ' + b.what);
+    inp.value = r.amount;
+    inp.disabled = r.out;
+    var tx = function (s) { var sp = document.createElement('span'); sp.className = 'cxw'; sp.textContent = s; return sp; };
+    if (kind === 'Medicine') { row.appendChild(tx(b.what)); row.appendChild(inp); row.appendChild(tx(b.unit)); }
+    else { row.appendChild(inp); row.appendChild(tx((b.unit !== '' ? b.unit + ' ' : '') + b.what)); }
+    var lo = document.createElement('button');
+    lo.type = 'button';
+    lo.className = 'cxlo';
+    lo.setAttribute('data-i', String(i));
+    lo.textContent = r.out ? 'Put back' : 'Leave out';
+    row.appendChild(lo);
+    w.rows.appendChild(row);
+  });
+}
+function cxLine(div, label, text) {
+  div.textContent = '';
+  var b = document.createElement('b');
+  b.textContent = label + ' ';
+  div.appendChild(b);
+  div.appendChild(document.createTextNode(text));
+}
+function cxLines(kind, p) {
+  var w = CX[kind], c = cxOf(kind, p);
+  if (!w || !c) return;
+  var kept = [];
+  c.base.forEach(function (b, i) {
+    var r = c.rows[i], a = amountNorm(r.amount);
+    if (!r.out && !isZero(a)) kept.push(itemText(kind, { what: b.what, amount: a, unit: b.unit }));
+  });
+  Array.prototype.forEach.call(w.rows.querySelectorAll('input.cxin'), function (inp) {
+    var i = Number(inp.getAttribute('data-i'));
+    inp.classList.toggle('chg', !c.rows[i].out && !sameAmount(amountNorm(c.rows[i].amount), c.base[i].amount));
+  });
+  cxLine(w.reads, CX_WORDS[kind].reads, kept.length ? kept.join(', ') : 'nothing');
+  var res = cxResult(kind, p);
+  cxLine(w.chg, CX_WORDS[kind].changed, res === null ? 'nothing yet' : (res.bad ? '—' : res.changed));
+}
+// Under the ticked usual one, before the choices after it (drawings 1 to 4). A fault here hides the rows and leaves the
+// rest of the screen drawn (AC-W3).
+function renderCx(kind, p) {
+  try { drawCx(kind, p); } catch (e) { if (CX[kind]) { CX[kind].wrap.hidden = true; CX[kind].sig = ''; } }
+}
+function drawCx(kind, p) {
+  var w = CX[kind];
+  if (!w) return;
+  var u = p ? usualOf(kind, p.pick) : null;
+  var c = u ? cxOf(kind, p) : null;
+  var pickBtn = null;
+  if (u && (c || itemsOk(rowsOf(kind, u)))) {
+    Array.prototype.forEach.call(el('c-' + kind).querySelectorAll('.choice'), function (b) {
+      if (b.getAttribute('data-name') === p.pick) pickBtn = b;
+    });
+  }
+  if (!pickBtn) { w.wrap.hidden = true; return; }
+  if (pickBtn.nextSibling !== w.wrap) pickBtn.parentNode.insertBefore(w.wrap, pickBtn.nextSibling);
+  w.wrap.hidden = false;
+  // What a changed entry recorded, when its rows are not what the screen shows (AC-W6)
+  var fx = fixOn('Intraday') ? state.fix : null, o = fx ? fx.orig : null;
+  var rec = !!fx && o[kind + ' changed'] !== undefined && keptAsRecorded(fx, kind) && (!c || !recordedRows(kind, o));
+  w.rec.hidden = !rec;
+  if (rec) {
+    cxLine(w.rec, 'This entry recorded:', String(o[kind + ' contents'] === undefined ? '' : o[kind + ' contents']) +
+           ' (changed: ' + String(o[kind + ' changed']) + '). It stays that way unless you change it here; ' +
+           CX_WORDS[kind].btn + ' starts from ' + u.name + ' as it is now.');
+  }
+  w.btn.classList.toggle('on', !!c);
+  w.btn.setAttribute('aria-expanded', c ? 'true' : 'false');
+  w.body.hidden = !c;
+  if (!c) { w.sig = ''; return; }
+  var sig = JSON.stringify([c.id, c.base, c.rows.map(function (r) { return r.out; })]);
+  if (w.sig !== sig) { cxBuildRows(kind, c); w.sig = sig; }
+  Array.prototype.forEach.call(w.rows.querySelectorAll('input.cxin'), function (inp) {
+    var r = c.rows[Number(inp.getAttribute('data-i'))];
+    if (r && document.activeElement !== inp && inp.value !== r.amount) inp.value = r.amount;
+  });
+  w.hint.textContent = kind === 'Shake'
+    ? 'For this shake only. Your next ' + u.name + ' is the usual again, and ' + u.name + ' itself stays as it is.'
+    : 'For this entry only. Your next ' + u.name + ' is the usual again.';
+  cxLines(kind, p);
 }
 
 
@@ -2596,6 +3005,7 @@ function listParts(f) {
       if (f[k] === undefined) return;
       title.push(k + ' · ' + f[k]);
       if (f[k] === SOMETHING_ELSE && f[k + ' contents'] !== undefined) words.push([k + ': ', f[k + ' contents']]);
+      else if (f[k + ' changed'] !== undefined) details.push(CX_WORDS[k].list + f[k + ' changed']);      // 026
     });
     if (f['Workout'] !== undefined) {
       title.push('Workout · ' + f['Workout']);
@@ -2940,6 +3350,7 @@ function render() {
   renderWhen();
   renderEndBox();
   renderScores();
+  cxSettle();                       // 026-2 (AC-W5)
   renderIntraday();
   renderMorning();
   renderEvening();
@@ -2990,6 +3401,7 @@ function renderIntraday() {
     });
     el('pk-' + kind).hidden = !(pick && pick.pick === null);             // 025, D173
     el('mu-' + kind).hidden = fixOn('Intraday');                          // not while changing a saved entry (G025-5)
+    renderCx(kind, pick);                                                  // 026
     var wi = el('w-' + kind);
     wi.hidden = !(pick && pick.pick === SOMETHING_ELSE);
     var wanted = pick ? pick.what : '';
@@ -3197,6 +3609,7 @@ function buildUsualChoices() {
         b.addEventListener('click', function () {
           touch();
           if (!idr()[kind]) idr()[kind] = { pick: o.name, what: '' };
+          if (idr()[kind].pick !== o.name) delete idr()[kind].chg;          // another pick drops the change (G026-6)
           idr()[kind].pick = o.name;
           storeDraft(true);
           render();
@@ -3220,6 +3633,7 @@ function buildButtons() {
       render();
     });
     el('mu-' + kind).addEventListener('click', function () { openUsuals(kind); });     // 025
+    buildCx(kind);                                                                   // 026
     el('w-' + kind).setAttribute('maxlength', String(WHAT_MAX));
     el('w-' + kind).addEventListener('input', function () {
       touch();
