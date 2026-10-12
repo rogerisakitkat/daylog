@@ -185,3 +185,33 @@ body.fixing, body.fixing header { background: #fbf0c4; }           /* pale yello
 .fixend { margin: 8px 12px 0; padding: 8px 10px; border-radius: 10px; background: #fff; border: 1px solid var(--line); }
 .fixend .tbox.inq { margin: 0 0 8px; }
 .fixaway { margin: 12px 12px 0; padding: 10px 12px; border-radius: 12px; background: var(--accent-soft); border: 2px solid var(--accent); font-size: 14.5px; color: var(--ink); }
+
+/* My usual ones (025; approved mockup round 3, picture 6, and increment 025's pictures 1 to 6) */
+body.usualsopen #heads, body.usualsopen #fixbanner { display: none !important; }
+body.usualsopen main > :not(#sc-Usuals):not(#status):not(#error) { display: none !important; }
+.mubtn { margin-top: 8px; }
+.usuals { padding-bottom: 10px; }
+.mubar { display: flex; align-items: center; gap: 14px; background: #fff; border-bottom: 1px solid var(--line); padding: 10px 12px; }
+.muback { background: none; border: 0; padding: 4px 0; color: var(--accent); font-weight: 600; font-size: 15px; }
+.muttl { font-weight: 700; font-size: 17px; overflow-wrap: anywhere; }
+.munote { margin: 10px 12px 0; padding: 9px 11px; border-radius: 10px; background: var(--ok-soft); color: var(--ok); border: 1px solid #b9dcc5; font-size: 14px; }
+.munote.bad { background: var(--bad-soft); color: var(--bad); border-color: #f0c2bd; font-weight: 600; }
+.ucard { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; margin: 0 12px 8px; background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 11px 12px; }
+.ucard .un { font-weight: 700; font-size: 16px; overflow-wrap: anywhere; }
+.ucard .uc { font-size: 13.5px; color: var(--muted); margin-top: 3px; overflow-wrap: anywhere; }
+.ucard.none { display: block; color: var(--muted); }
+.muadd { display: block; width: calc(100% - 24px); margin: 0 12px 6px; background: none; border: 1.5px dashed var(--accent); color: var(--accent); border-radius: 14px; padding: 12px; font-weight: 600; font-size: 15px; text-align: center; }
+.mulbls, .murow { display: grid; gap: 6px; margin: 0 12px 6px; align-items: center; }
+.mulbls { font-size: 12px; color: var(--muted); font-weight: 600; margin-bottom: 3px; }
+.mulbls.Shake, .murow.Shake { grid-template-columns: 64px 58px minmax(0, 1fr) 38px; }
+.mulbls.Medicine, .murow.Medicine { grid-template-columns: minmax(0, 1fr) 58px 92px 38px; }
+.murow input { width: 100%; min-width: 0; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 9px 8px; font: inherit; font-size: 16px; color: var(--ink); }
+.murow input::placeholder { color: #80868e; }
+.mux { border: 1px solid var(--line); background: #fff; color: var(--muted); border-radius: 10px; padding: 8px 0; font-size: 15px; }
+.mureads { margin: 8px 12px 0; padding: 9px 11px; background: var(--accent-soft); border-radius: 10px; font-size: 14px; overflow-wrap: anywhere; }
+.mureads b { font-weight: 600; }
+.mustop { display: block; width: calc(100% - 24px); margin: 26px 12px 0; background: #fff; border: 1px solid #e3b5b0; color: var(--bad); border-radius: 12px; padding: 11px; font-weight: 600; font-size: 15px; text-align: center; }
+.muask { margin: 26px 12px 0; padding: 10px 12px; background: var(--bad-soft); border: 1px solid #f0c2bd; border-radius: 12px; font-size: 14.5px; }
+.muaskbtns { display: flex; gap: 10px; margin-top: 10px; }
+.muaskbtns .btn { flex: 1; text-align: center; padding: 10px; }
+.muaskbtns .muyes { border-color: var(--bad); color: var(--bad); }

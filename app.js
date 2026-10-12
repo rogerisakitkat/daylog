@@ -118,8 +118,20 @@
  * with the panel and Something else; page 023-4 reads a screen kept by 024 without the ticks (the way back).
  * 024-2 (Agent AA, W1): a change in progress stored by 023-4 or earlier (its Other part has no ticks) takes the ticks
  * from the entry being changed, so a Save changes never takes off ticks he did not touch.
+ * 025 (2026-10-12): My usual ones (D170 to D175; mockup round 3, picture 6; increment 025's pictures 1 to 6). "Change my
+ * usual ones" under Shake and Medicine opens a screen listing the usual shakes and medicine sets; Change opens one with
+ * its name and one row per item (Amount, Unit, What; for medicine What, Amount, Unit), filled from its stored line the
+ * first time (a line like "pill A 40 units (2 x 20 units)" as pill A, 2, "x 20 units", D172); Save changes stores the next version
+ * (from then on; saved entries keep what they recorded, G40); Add makes a new one; Stop using asks once and takes it
+ * off the choices, sending a version marked "removed" (D174). The sheet gets each version on the Usual ones tab as
+ * before. With two or more of a kind none is ticked until he picks, and Save stops until he does (D173). Stored in kv
+ * "usuals" as before, each usual one with "items" and "savedAt" added and a "removed" list beside Shake and Medicine,
+ * which page 024-2 ignores (the way back). The writing is compared first, as the half-filled screens are (016). What is
+ * typed on My usual ones is kept in memory only (G025-1).
+ * 025-2: nothing of his in these files (D93): no medicine name, recipe, dose or usual-one ID in comments or examples; the
+ * old single "usualsSent" flag counts for version 1 of a usual one without "savedAt" (the ones pages 004 to 012 wrote).
  */
-var PAGE_VERSION = '024-2';
+var PAGE_VERSION = '025-2';
 var SCREENS = ['Morning', 'Intraday', 'Evening'];
 var SCORE_ROWS = ['Mind', 'Body', 'Balance'];
 var MORNING_SCORES = [{ label: 'Quality', key: 'Sleep quality' }, { label: 'Amount', key: 'Sleep amount' }];
@@ -149,6 +161,17 @@ var USUAL_MAX = 2000;             // a usual one's contents: no longer than a So
 var USUAL_NAME_MAX = 200;
 var USUAL_ID = /^[A-Za-z0-9_-]{8,64}$/;   // the sheet's rule for IDs (program 001-5)
 var USUAL_VERSION_MAX = 1000000;          // and for versions
+// My usual ones (025): a name typed there, the rows of one usual one, What or Unit of a row, an Amount.
+var USUAL_NAME_TYPED_MAX = 60;
+var ITEMS_MAX = 30;
+var ITEM_TEXT_MAX = 200;
+var AMOUNT_RE = /^(\d+(\.\d+)?|\.\d+)$/;
+var REMOVED_MAX = 1000;
+// The usual ones first written into phones by pages 004 to 012 have no "savedAt"; their version 1 was marked sent by
+// pages up to 007-3 with one flag for both ("usualsSent-real"), which counts only for them (025-2). Every usual one made
+// on My usual ones has "savedAt".
+// Characters that show as nothing, taken out of what is typed on My usual ones (Q38), as well as INVISIBLE below.
+var INVISIBLE_TYPED = /[\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u2065-\u2069\u2800\u3164\uFE00-\uFE0F\uFFA0]|\uDB40[\uDC00-\uDDEF]/g;
 // Characters that show as nothing: a name made only of them is blank.
 var INVISIBLE = /[\u00AD\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u206A-\u206F\uFEFF]/g;
 // The ones in use: none until storage has been read, then the stored ones.
@@ -192,7 +215,10 @@ var state = {
   noStorage: false,               // the phone's storage could not be opened at all when the page opened
   fix: null,                      // an entry being changed (019): { id, base, test, orig, dr, opened }
   fixConfirm: null,               // a change to another day, asked about once (019, G019-5)
-  shown: null                     // today's saved Morning and Evening entries, shown greyed (023): { day, Morning, Evening }
+  shown: null,                    // today's saved Morning and Evening entries, shown greyed (023): { day, Morning, Evening }
+  mu: null,                       // My usual ones while open (025), in memory only (G025-1): { view: 'list' | 'edit', ... }
+  usualsKnown: '-',               // the stored usual ones as this page last read or wrote them, as stable() (025)
+  usualsStored: null              // that stored value, when readable (025): { Shake, Medicine, removed }
 };
 var KEY_FIX = 'draft-fix';        // where a change in progress is kept (019)
 
@@ -806,6 +832,19 @@ function kindOk(k, v) {
 // this page's own still waiting to be written goes first, compared as always.
 function catchUp() {
   if (!state.loaded || state.noStorage) return Promise.resolve();
+  return catchUpUsuals().then(catchUpKept);
+}
+// Another open copy may have changed the usual ones (025): taken before the half-filled screens, so a pick renamed
+// there is found under its new name.
+function catchUpUsuals() {
+  if (state.usualsFrom === 'not read' || state.usualsFrom === 'unreadable' || muBusy) return Promise.resolve();
+  return DL.get('kv', 'usuals').then(function (v) {
+    if (muBusy || stable(v) === state.usualsKnown) return;
+    loadUsuals({ ok: true, value: v });
+    afterUsualsChanged(true);
+  }, function () { /* read again next time */ });
+}
+function catchUpKept() {
   if (draftTimer) return storeDraft(true);
   return queued(function () {
     if (!GUARDED.some(function (k) { return !state.unread[k]; })) return null;
@@ -894,7 +933,7 @@ function fieldsFor(dr, savedAt) {
   if (dr.personal) f['Personal'] = 'Yes';
   ['Shake', 'Medicine'].forEach(function (kind) {
     var pick = dr[kind];
-    if (!pick) return;
+    if (!pick || pick.pick === null) return;      // none picked yet (025, D173): Save stops before this
     var usual = USUALS[kind].filter(function (u) { return u.name === pick.pick; })[0];
     if (usual) {
       f[kind] = usual.name;
@@ -1050,6 +1089,7 @@ function save() {
     showNote('Pick Coffee, Water or Something else, or tap Liquids again to take it off.');
     return;
   }
+  if (screen === 'Intraday' && unpickedKind(dr)) { showNote(PICK_NOTE[unpickedKind(dr)]); return; }     // 025, D173
   // A walk or workout running that could not be read is never written over (015).
   if (screen === 'Intraday' && dr.workout && dr.workout.kind && state.unread.running) {
     showError('This phone could not read whether a walk or workout is already running, so a new one can’t be started just now. ' +
@@ -1596,6 +1636,7 @@ function saveFix() {
     showNote('Pick Coffee, Water or Something else, or tap Liquids again to take it off.');
     return;
   }
+  if (scr === 'Intraday' && unpickedKind(dr)) { showNote(PICK_NOTE[unpickedKind(dr)]); return; }     // 025, D173
   var walk = scr === 'Intraday' && fx.orig['Workout'] !== undefined;
   if (walk && state.unread.running) {
     showError('This phone could not read whether a walk or workout is running, so this one can’t be changed just now. ' +
@@ -1839,12 +1880,28 @@ function usualsReadable(u) {
 // from the opening read.
 function loadUsuals(read) {
   USUALS = { Shake: [], Medicine: [] };
+  state.usualsStored = null;
   if (!read || !read.ok) { state.usualsFrom = 'not read'; return; }
   var stored = read.value;
+  state.usualsKnown = stable(stored);             // compared before My usual ones writes (025)
   if (stored === undefined) { state.usualsFrom = 'none'; return; }
-  if (!usualsReadable(stored)) { state.usualsFrom = 'unreadable'; return; }
+  if (!usualsReadable(stored) || !removedOk(stored.removed)) { state.usualsFrom = 'unreadable'; return; }
   USUALS = { Shake: clone(stored.Shake), Medicine: clone(stored.Medicine) };
+  state.usualsStored = clone(stored);
   state.usualsFrom = (USUALS.Shake.length || USUALS.Medicine.length) ? 'phone' : 'none';
+}
+// The usual ones no longer used (025, D174), kept beside Shake and Medicine until sent: page 024-2 ignores them.
+function removedOk(r) {
+  if (r === undefined) return true;
+  if (!Array.isArray(r) || r.length > REMOVED_MAX) return false;
+  for (var i = 0; i < r.length; i++) {
+    if (!Object.prototype.hasOwnProperty.call(r, i)) return false;
+    var x = r[i];
+    if (!isObj(x) || USUAL_KINDS.indexOf(x.kind) < 0 || typeof x.id !== 'string' || !USUAL_ID.test(x.id)) return false;
+    if (typeof x.version !== 'number' || Math.floor(x.version) !== x.version || x.version < 1 || x.version > USUAL_VERSION_MAX) return false;
+    if (typeof x.name !== 'string' || x.name.length > USUAL_NAME_MAX || typeof x.contents !== 'string' || x.contents.length > USUAL_MAX) return false;
+  }
+  return true;
 }
 
 // A half-filled screen kept with a usual one picked that is not in use on this
@@ -1855,6 +1912,7 @@ function settleUsualPicks(dr) {
   USUAL_KINDS.forEach(function (kind) {
     var pick = dr && dr[kind];
     if (!pick || pick.pick === SOMETHING_ELSE) return;
+    if (pick.pick === null && USUALS[kind].length) return;          // none picked yet (025, D173)
     if (USUALS[kind].some(function (u) { return u.name === pick.pick; })) return;
     dr[kind] = { pick: SOMETHING_ELSE, what: hasText(pick.what) ? pick.what : String(pick.pick || '') };
   });
@@ -1878,6 +1936,420 @@ function usualsNote(kind) {
                  'Type what you had.' };
 }
 
+
+// ------------------------------------------------------------------ My usual ones (025)
+
+var PICK_NOTE = { Shake: 'Pick which shake you had, or tap Shake again to take it off.',
+                  Medicine: 'Pick which medicine set you had, or tap Medicine again to take it off.' };
+// The first of Shake and Medicine tapped with none picked yet (D173), or null.
+function unpickedKind(dr) {
+  return USUAL_KINDS.filter(function (k) { return !!dr[k] && dr[k].pick === null; })[0] || null;
+}
+var KIND_WORDS = { Shake: { one: 'shake', many: 'shakes', add: '+ Add a shake', head: 'Shakes', choices: 'Shake' },
+                   Medicine: { one: 'set', many: 'medicine sets', add: '+ Add a set', head: 'Medicine', choices: 'Medicine' } };
+// What is typed there, cleaned (Q38): characters that show as nothing taken out, runs of spaces made one.
+function cleanTyped(s) {
+  return String(s === undefined || s === null ? '' : s).replace(INVISIBLE, '').replace(INVISIBLE_TYPED, '').replace(/\s+/g, ' ').trim();
+}
+function nameKey(s) { return cleanTyped(s).toLowerCase(); }
+// One row as it reads: a shake's "40 g oats", a medicine's "pill A 2 x 20 units".
+function itemText(kind, it) {
+  var parts = kind === 'Medicine' ? [it.what, it.amount, it.unit] : [it.amount, it.unit, it.what];
+  return parts.filter(function (p) { return p !== ''; }).join(' ');
+}
+function contentsOf(kind, items) { return items.map(function (it) { return itemText(kind, it); }).join(', '); }
+function itemsOk(items) {
+  return Array.isArray(items) && items.length >= 1 && items.length <= ITEMS_MAX && items.every(function (it) {
+    return isObj(it) && typeof it.what === 'string' && typeof it.amount === 'string' && typeof it.unit === 'string' && it.what !== '' &&
+           (it.amount === '' || AMOUNT_RE.test(it.amount)) && it.what.length <= ITEM_TEXT_MAX && it.unit.length <= ITEM_TEXT_MAX;
+  });
+}
+// The rows of a usual one: its stored rows when they read as its line, else split from the line (D172).
+function rowsOf(kind, u) {
+  if (itemsOk(u.items) && contentsOf(kind, u.items) === u.contents) return clone(u.items);
+  if (u.contents === '') return [{ what: '', amount: '', unit: '' }];
+  return u.contents.split(', ').map(function (part) { return splitItem(kind, part); });
+}
+// One part of a stored line as a row; a part that would not read exactly as before goes whole into What.
+// "pill A 40 units (2 x 20 units)" becomes pill A, 2, "x 20 units" (D172).
+function splitItem(kind, part) {
+  var it = null, m;
+  if (kind === 'Medicine') {
+    m = /^(.*?\S)\s+(\d+(?:\.\d+)?|\.\d+)(?:\s+(.*\S))?$/.exec(part);
+    if (m) {
+      it = { what: m[1], amount: m[2], unit: m[3] || '' };
+      var b = /^(\S+)\s*\((\d+)\s*x\s*(\d+(?:\.\d+)?)\s*(\S+)\)$/.exec(it.unit);
+      if (b && b[1] === b[4] && Math.abs(Number(b[2]) * Number(b[3]) - Number(it.amount)) < 1e-9 && itemText(kind, it) === part) {
+        return { what: it.what, amount: b[2], unit: 'x ' + b[3] + ' ' + b[4] };
+      }
+    }
+  } else {
+    m = /^(\d+(?:\.\d+)?|\.\d+)\s+(\S+)\s+(.*\S)$/.exec(part);
+    if (m) it = { what: m[3], amount: m[1], unit: m[2] };
+  }
+  if (it && itemText(kind, it) === part) return it;
+  return { what: part, amount: '', unit: '' };
+}
+// Why the usual ones cannot be changed just now, or ''.
+function usualsLocked() {
+  if (state.noStorage) return 'This phone’s storage could not be opened, so your usual ones can’t be changed just now. Close the page and open it again; if it keeps happening, tell Claude.';
+  if (state.reading || state.usualsFrom === 'not read') return 'Your usual ones could not be read on this phone just now, so they can’t be changed. Close the page and open it again; if this stays, tell Claude.';
+  if (state.usualsFrom === 'unreadable') return 'The usual ones stored on this phone cannot be read, so they can’t be changed here. Tell Claude.';
+  return '';
+}
+var OTHER_COPY_USUALS = 'Your usual ones were changed in another open copy of the day log just now, so this shows the latest. ' +
+                        'If a change of yours is missing, make it again. ' + CLOSE_OTHER;
+function muRev() { return (state.mu && state.mu.rev || 0) + 1; }
+function muList(note, bad) {
+  var from = state.mu ? state.mu.from : 'Shake';
+  state.mu = { view: 'list', from: from, note: note || '', bad: !!bad, rev: muRev() };
+}
+function openUsuals(kind) {
+  if (fixOn('Intraday') || !state.loaded) return;
+  armedId = null;
+  storeDraft(true);
+  closePad();
+  closeTpad();
+  el('nothing').hidden = true;
+  state.mu = { view: 'list', from: kind, note: '', bad: false, rev: muRev() };
+  render();
+  window.scrollTo(0, 0);
+}
+function closeUsuals() {
+  var from = state.mu ? state.mu.from : null;
+  state.mu = null;
+  render();
+  var p = from ? el('p-' + from) : null;
+  if (p && !p.hidden) { try { p.scrollIntoView({ block: 'center' }); } catch (x) { window.scrollTo(0, 0); } } else window.scrollTo(0, 0);
+}
+function openUsualEdit(kind, id) {
+  var u = id ? USUALS[kind].filter(function (x) { return x.id === id; })[0] : null;
+  if (id && !u) return;
+  state.mu = { view: 'edit', from: state.mu ? state.mu.from : kind, kind: kind, id: u ? u.id : null, base: u ? u.version : 0,
+               origName: u ? u.name : '', origContents: u ? u.contents : '', name: u ? u.name : '',
+               rows: u ? rowsOf(kind, u) : [{ what: '', amount: '', unit: '' }], ask: false, note: '', bad: false, rev: muRev() };
+  render();
+  window.scrollTo(0, 0);
+}
+
+// The screen, drawn again only when what it shows changes (rev), so typing is never interrupted.
+var muDrawn = 0;
+function renderUsuals() {
+  var open = !!state.mu;
+  document.body.classList.toggle('usualsopen', open);
+  var sc = el('sc-Usuals');
+  sc.hidden = !open;
+  if (!open) { if (muDrawn) { sc.textContent = ''; muDrawn = 0; } return; }
+  if (state.mu.rev === muDrawn) return;
+  muDrawn = state.mu.rev;
+  sc.textContent = '';
+  var add = function (parent, tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    parent.appendChild(e);
+    return e;
+  };
+  var m = state.mu, locked = usualsLocked();
+  var bar = add(sc, 'div', 'mubar');
+  var back = add(bar, 'button', 'muback', m.view === 'list' ? '‹ Back' : '‹ My usual ones');
+  back.type = 'button'; back.id = 'muback';
+  var ttl = m.view === 'list' ? 'My usual ones' : (m.id ? 'Change ' + m.origName : (m.kind === 'Shake' ? 'New shake' : 'New medicine set'));
+  add(bar, 'span', 'muttl', ttl).id = 'muttl';
+  if (m.note) { var n = add(sc, 'div', 'munote' + (m.bad ? ' bad' : ''), m.note); n.id = 'munote'; }
+  if (locked) { var l = add(sc, 'div', 'munote bad', locked); l.id = 'mulocked'; }
+  if (m.view === 'list') {
+    USUAL_KINDS.forEach(function (kind) {
+      var w = KIND_WORDS[kind];
+      add(sc, 'h3', '', w.head);
+      if (!USUALS[kind].length) add(sc, 'div', 'ucard none', 'None yet.');
+      USUALS[kind].forEach(function (u) {
+        var card = add(sc, 'div', 'ucard');
+        card.setAttribute('data-id', u.id);
+        var t = add(card, 'div', '');
+        add(t, 'div', 'un', u.name);
+        add(t, 'div', 'uc', u.contents);
+        if (!locked) {
+          var c = add(card, 'button', 'btn muchg', 'Change');
+          c.type = 'button'; c.setAttribute('data-kind', kind); c.setAttribute('data-id', u.id);
+        }
+      });
+      if (!locked) {
+        var a = add(sc, 'button', 'muadd munew', w.add);
+        a.type = 'button'; a.setAttribute('data-kind', kind); a.id = 'muadd-' + kind;
+      }
+    });
+    add(sc, 'div', 'hint', 'A change counts from now on. Entries already saved keep what they recorded.').style.marginTop = '12px';
+    return;
+  }
+  // Change or New
+  var kind = m.kind;
+  add(sc, 'h3', '').appendChild(document.createTextNode('Name'));
+  var nm = add(sc, 'input', 'box line');
+  nm.id = 'muname'; nm.type = 'text'; nm.maxLength = USUAL_NAME_TYPED_MAX; nm.autocomplete = 'off';
+  nm.placeholder = kind === 'Shake' ? 'Name, like Shake 2' : 'Name, like Night set';
+  nm.value = m.name;
+  add(sc, 'h3', '', 'What’s in it');
+  var cols = kind === 'Medicine' ? [['What', 'what'], ['Amount', 'amount'], ['Unit', 'unit']] : [['Amount', 'amount'], ['Unit', 'unit'], ['What', 'what']];
+  var ph = kind === 'Medicine' ? { what: 'vitamin C', amount: '1', unit: 'tablet' } : { what: 'oats', amount: '40', unit: 'g' };     // made-up examples (025-2)
+  if (m.rows.length) {
+    var lb = add(sc, 'div', 'mulbls ' + kind);
+    cols.forEach(function (c) { add(lb, 'span', '', c[0]); });
+    add(lb, 'span', '');
+  }
+  m.rows.forEach(function (r, i) {
+    var row = add(sc, 'div', 'murow ' + kind);
+    row.setAttribute('data-i', String(i));
+    cols.forEach(function (c) {
+      var inp = add(row, 'input', '');
+      inp.type = 'text'; inp.autocomplete = 'off';
+      inp.setAttribute('data-f', c[1]);
+      inp.setAttribute('aria-label', c[0] + ', item ' + (i + 1));
+      inp.maxLength = c[1] === 'amount' ? 12 : ITEM_TEXT_MAX;
+      if (c[1] === 'amount') inp.inputMode = 'decimal';
+      if (i === 0 && !m.id) inp.placeholder = ph[c[1]];
+      inp.value = r[c[1]];
+    });
+    var x = add(row, 'button', 'mux', '✕');
+    x.type = 'button'; x.setAttribute('aria-label', 'Take item ' + (i + 1) + ' off');
+  });
+  var ar = add(sc, 'button', 'muadd', '+ Add an item');
+  ar.type = 'button'; ar.id = 'muaddrow'; ar.style.marginTop = '8px';
+  var rd = add(sc, 'div', 'mureads');
+  add(rd, 'b', '', 'Reads: ');
+  add(rd, 'span', '', '').id = 'mureads';
+  muReads();
+  add(sc, 'div', 'hint', m.id ? 'From now on, ' + m.origName + ' is what you save here. Entries already saved keep what they recorded.'
+                              : 'Saved to your usual ' + KIND_WORDS[kind].many + ' and to your sheet.');
+  var sv = add(sc, 'button', 'save', m.id ? 'Save changes to ' + m.origName : (kind === 'Shake' ? 'Save new shake' : 'Save new set'));
+  sv.type = 'button'; sv.id = 'musave';
+  if (locked) sv.disabled = true;
+  var cn = add(sc, 'button', 'btn quiet wide', 'Cancel');
+  cn.type = 'button'; cn.id = 'mucancel';
+  if (m.id && !locked) {
+    if (!m.ask) {
+      var st = add(sc, 'button', 'mustop', 'Stop using ' + m.origName);
+      st.type = 'button'; st.id = 'mustop';
+      add(sc, 'div', 'hint', m.origName + ' comes off your ' + KIND_WORDS[kind].choices + ' choices. Your sheet keeps it, marked removed, and entries already saved keep it.');
+    } else {
+      var ask = add(sc, 'div', 'muask');
+      ask.id = 'muask';
+      add(ask, 'b', '', 'Stop using ' + m.origName + '?');
+      ask.appendChild(document.createTextNode(' It comes off your ' + KIND_WORDS[kind].choices + ' choices. Entries already saved keep it.'));
+      var bs = add(ask, 'div', 'muaskbtns');
+      var y = add(bs, 'button', 'btn muyes', 'Yes, stop using it'); y.type = 'button'; y.id = 'muyes';
+      var no = add(bs, 'button', 'btn quiet', 'No'); no.type = 'button'; no.id = 'muno';
+    }
+  }
+}
+function muReads() {
+  var m = state.mu, r = el('mureads');
+  if (!m || m.view !== 'edit' || !r) return;
+  var rows = m.rows.map(function (x) { return { what: cleanTyped(x.what), amount: cleanTyped(x.amount), unit: cleanTyped(x.unit) }; })
+                   .filter(function (x) { return x.what || x.amount || x.unit; });
+  r.textContent = rows.length ? contentsOf(m.kind, rows) : '(nothing yet)';
+}
+function muRedraw(focus) {
+  state.mu.rev = muRev();
+  render();
+  if (focus) { var f = document.querySelector(focus); if (f) { try { f.focus(); } catch (x) { /* ignore */ } } }
+}
+function wireUsuals() {
+  var sc = el('sc-Usuals');
+  sc.addEventListener('click', function (e) {
+    var t = e.target && e.target.closest ? e.target.closest('button') : null;
+    var m = state.mu;
+    if (!t || !m) return;
+    if (t.id === 'muback') { if (m.view === 'list') closeUsuals(); else { muList(''); render(); window.scrollTo(0, 0); } return; }
+    if (t.id === 'mucancel') { muList(''); render(); window.scrollTo(0, 0); return; }
+    if (m.view === 'list') {
+      if (usualsLocked()) return;
+      if (t.classList.contains('muchg')) { openUsualEdit(t.getAttribute('data-kind'), t.getAttribute('data-id')); return; }
+      if (t.classList.contains('munew')) { openUsualEdit(t.getAttribute('data-kind'), null); return; }
+      return;
+    }
+    if (t.classList.contains('mux')) {
+      var i = Number(t.closest('.murow').getAttribute('data-i'));
+      m.rows.splice(i, 1);
+      m.note = '';
+      muRedraw(null);
+      return;
+    }
+    if (t.id === 'muaddrow') {
+      if (m.rows.length >= ITEMS_MAX) { m.note = 'A usual one can hold up to ' + ITEMS_MAX + ' items.'; m.bad = true; muRedraw(null); return; }
+      m.rows.push({ what: '', amount: '', unit: '' });
+      m.note = '';
+      muRedraw('.murow[data-i="' + (m.rows.length - 1) + '"] input');
+      return;
+    }
+    if (t.id === 'musave') { muSave(); return; }
+    if (t.id === 'mustop') { m.ask = true; m.note = ''; muRedraw(null); return; }
+    if (t.id === 'muno') { m.ask = false; muRedraw(null); return; }
+    if (t.id === 'muyes') { muStop(); return; }
+  });
+  sc.addEventListener('input', function (e) {
+    var t = e.target, m = state.mu;
+    if (!t || !m || m.view !== 'edit') return;
+    if (t.id === 'muname') { m.name = t.value; return; }
+    var row = t.closest ? t.closest('.murow') : null;
+    if (!row) return;
+    var i = Number(row.getAttribute('data-i')), f = t.getAttribute('data-f');
+    if (m.rows[i] && f) { m.rows[i][f] = t.value; muReads(); }
+  });
+}
+
+// Checks what was typed, then writes the next version (or a new one), compared first (G025-2, G025-3).
+function muSave() {
+  var m = state.mu;
+  if (!m || m.view !== 'edit' || muBusy) return;
+  if (usualsLocked()) { muRedraw(null); return; }
+  var kind = m.kind, w = KIND_WORDS[kind];
+  var name = cleanTyped(m.name);
+  var rows = m.rows.map(function (x) { return { what: cleanTyped(x.what), amount: cleanTyped(x.amount), unit: cleanTyped(x.unit) }; })
+                   .filter(function (x) { return x.what || x.amount || x.unit; });
+  rows.forEach(function (x) { if (/^\.\d/.test(x.amount)) x.amount = '0' + x.amount; });
+  var err = '';
+  if (!name) err = 'Give it a name.';
+  else if (name.length > USUAL_NAME_TYPED_MAX) err = 'A name can be up to ' + USUAL_NAME_TYPED_MAX + ' characters.';
+  else if (name.toLowerCase() === SOMETHING_ELSE.toLowerCase()) err = '“' + SOMETHING_ELSE + '” can’t be used as a name.';
+  else if (USUALS[kind].some(function (u) { return u.id !== m.id && nameKey(u.name) === name.toLowerCase(); })) {
+    err = 'You already have a ' + w.one + ' called ' + name + '. Pick another name.';
+  } else if (!rows.length) err = 'Add at least one item.';
+  else if (rows.length > ITEMS_MAX) err = 'A usual one can hold up to ' + ITEMS_MAX + ' items.';
+  else if (rows.some(function (x) { return !x.what; })) err = 'Each item needs What. Fill it in, or take that item off with ✕.';
+  else if (rows.some(function (x) { return x.amount !== '' && !AMOUNT_RE.test(x.amount); })) {
+    err = 'Amount must be a number, like 40 or 1.5. Leave it empty if there is none.';
+  } else if (rows.some(function (x) { return x.what.length > ITEM_TEXT_MAX || x.unit.length > ITEM_TEXT_MAX; })) {
+    err = 'What and Unit can be up to ' + ITEM_TEXT_MAX + ' characters.';
+  }
+  var contents = err ? '' : contentsOf(kind, rows);
+  if (!err && contents.length > USUAL_MAX) err = 'This is too long: what it holds can be up to ' + USUAL_MAX.toLocaleString('en-US') + ' characters.';
+  if (err) { m.note = err; m.bad = true; muRedraw(null); window.scrollTo(0, 0); return; }
+  if (m.id && name === m.origName && contents === m.origContents) {
+    muList('Nothing was changed, so nothing was saved.');
+    render();
+    window.scrollTo(0, 0);
+    return;
+  }
+  var stamp = DL.stampNow();
+  writeUsuals(function (st) {
+    var list = st[kind];
+    if (m.id) {
+      var i = -1;
+      list.forEach(function (u, j) { if (u.id === m.id) i = j; });
+      if (i < 0 || list[i].version !== m.base) return null;        // not what he opened (taken from another copy meanwhile)
+      list[i] = { id: m.id, version: m.base + 1, name: name, contents: contents, items: rows, savedAt: stamp };
+    } else {
+      list.push({ id: newUsualId(kind, st), version: 1, name: name, contents: contents, items: rows, savedAt: stamp });
+    }
+    return st;
+  }, m.id && name !== m.origName ? { kind: kind, from: m.origName, to: name } : null, function (wrote) {
+    if (!wrote) { muList(OTHER_COPY_USUALS, true); render(); window.scrollTo(0, 0); return; }
+    muList(m.id ? 'Saved. ' + name + ' is changed from now on.' : 'Saved. ' + name + ' is added to your ' + w.many + '.');
+    render();
+    window.scrollTo(0, 0);
+  });
+}
+function muStop() {
+  var m = state.mu;
+  if (!m || m.view !== 'edit' || !m.id || muBusy) return;
+  if (usualsLocked()) { muRedraw(null); return; }
+  var kind = m.kind, stamp = DL.stampNow(), gone = null;
+  writeUsuals(function (st) {
+    var list = st[kind], i = -1;
+    list.forEach(function (u, j) { if (u.id === m.id) i = j; });
+    if (i < 0 || list[i].version !== m.base) return null;
+    var u = list[i];
+    gone = u.name;
+    list.splice(i, 1);
+    var r = { kind: kind, id: u.id, version: u.version + 1, name: u.name, contents: u.contents, savedAt: stamp };
+    if (itemsOk(u.items)) r.items = u.items;
+    st.removed = (Array.isArray(st.removed) ? st.removed : []).concat([r]);
+    return st;
+  }, { kind: kind, from: m.origName, to: null }, function (wrote) {
+    if (!wrote) { muList(OTHER_COPY_USUALS, true); render(); window.scrollTo(0, 0); return; }
+    muList('Done. ' + gone + ' is off your ' + KIND_WORDS[kind].choices + ' choices.');
+    render();
+    window.scrollTo(0, 0);
+  });
+}
+function newUsualId(kind, st) {
+  var used = {};
+  USUAL_KINDS.forEach(function (k) { (st[k] || []).forEach(function (u) { used[u.id] = true; }); });
+  (Array.isArray(st.removed) ? st.removed : []).forEach(function (u) { used[u.id] = true; });
+  var id;
+  do {
+    var r = '';
+    for (var i = 0; i < 12; i++) r += 'abcdefghijklmnopqrstuvwxyz0123456789'.charAt(Math.floor(Math.random() * 36));
+    id = 'usual-' + (kind === 'Shake' ? 'shake' : 'medicine') + '-' + r;
+  } while (used[id]);
+  return id;
+}
+// The half-filled screen's pick follows a renamed usual one, or comes off one no longer used (G025-6).
+function movePick(kind, from, to) {
+  var dr = state.draft;
+  if (!dr || !dr[kind] || dr[kind].pick !== from) return;
+  if (to === null) { dr[kind] = null; settleOf('Intraday', dr); } else dr[kind].pick = to;
+  storeDraft(true);
+}
+
+// One storage step: the stored usual ones are read and compared with what this page last read; only if
+// unchanged is make(stored) written (it returns the new value, or null to write nothing). Once written, the
+// half-filled screen's pick is moved (move: { kind, from, to }, G025-6) before the choices are put right.
+// done(written or null).
+var muBusy = false;
+function writeUsuals(make, move, done) {
+  if (muBusy) return;
+  muBusy = true;
+  var known = state.usualsKnown, got, wrote = null, refused = false;
+  DL.db().then(function (d) {
+    return new Promise(function (resolve, reject) {
+      var t = d.transaction(['kv'], 'readwrite');
+      var s = t.objectStore('kv');
+      var q = s.get('usuals');
+      q.onsuccess = function () {
+        got = q.result;
+        if (stable(got) !== known) { refused = true; return; }
+        var base = got === undefined ? { Shake: [], Medicine: [] } : clone(got);
+        wrote = make(base);
+        if (!wrote) return;
+        if (!usualsReadable(wrote) || !removedOk(wrote.removed)) { wrote = null; throw new Error('not a readable value'); }
+        s.put(wrote, 'usuals');
+      };
+      t.oncomplete = function () { resolve(); };
+      t.onerror = function () { reject(t.error || new Error('storage error')); };
+      t.onabort = function () { reject(t.error || new Error('storage aborted')); };
+    });
+  }).then(function () {
+    muBusy = false;
+    if (refused) { loadUsuals({ ok: true, value: got }); afterUsualsChanged(false); done(null); return; }
+    if (wrote) {
+      loadUsuals({ ok: true, value: wrote });
+      if (move) movePick(move.kind, move.from, move.to);
+      afterUsualsChanged(false);
+      tellKept();
+      kick();
+    }
+    done(wrote);
+  }, function () {
+    muBusy = false;
+    if (state.mu) {
+      state.mu.note = 'Not saved: this phone could not write to its own storage just now. Try again; if it keeps happening, tell Claude.';
+      state.mu.bad = true;
+      muRedraw(null);
+      window.scrollTo(0, 0);
+    }
+  });
+}
+// After the usual ones changed (here, or in another open copy: byOther): the choices are built again, and an open
+// My usual ones goes back to its list, saying so when another copy changed them.
+function afterUsualsChanged(byOther) {
+  buildUsualChoices();
+  settleUsualPicks(state.draft);
+  if (byOther && state.mu) { muList(OTHER_COPY_USUALS, true); window.scrollTo(0, 0); }
+  render();
+}
+
 // ------------------------------------------------------------------ sending
 
 // Send the usual ones to the Usual ones tab once per kind of link (real or
@@ -1888,34 +2360,48 @@ function usualsNote(kind) {
 // are those in use, read from storage first; their IDs and versions are the
 // same as before, so nothing already sent goes again. On 013 a phone with none
 // stored sends none.
-var seeding = false;
+var seeding = false, seedAgain = false;
 function seedUsuals() {
   var link = state.link;
-  if (!link || seeding || !state.usualsFrom) return;
+  if (!link || !state.usualsFrom) return;
+  if (seeding) { seedAgain = true; return; }          // a change made meanwhile is sent right after (025)
   var which = link.test ? 'test' : 'real';
   var oldFlag = 'usualsSent-' + which;
   var all = [];
-  USUAL_KINDS.forEach(function (kind) { USUALS[kind].forEach(function (u) { all.push({ kind: kind, u: u }); }); });
+  USUAL_KINDS.forEach(function (kind) { USUALS[kind].forEach(function (u) { all.push({ kind: kind, u: u, st: 'current' }); }); });
+  // Usual ones no longer used go as a version marked removed (025, D174).
+  var rem = state.usualsStored && Array.isArray(state.usualsStored.removed) ? state.usualsStored.removed : [];
+  rem.forEach(function (r) { all.push({ kind: r.kind, u: r, st: 'removed' }); });
   var flagOf = function (u) { return 'usualSent-' + u.id + '-v' + u.version + '-' + which; };
   seeding = true;
   Promise.all([DL.get('kv', oldFlag)].concat(all.map(function (a) { return DL.get('kv', flagOf(a.u)); }))).then(function (got) {
     var oldDone = !!got[0];
-    var toSend = all.filter(function (a, i) { return !got[i + 1] && !(oldDone && a.u.version === 1); });
-    var toMark = all.filter(function (a, i) { return !got[i + 1] && oldDone && a.u.version === 1; });
+    // The one old flag counts only for version 1 of the first two usual ones (025).
+    var oldOnes = function (a) { return oldDone && a.u.version === 1 && typeof a.u.savedAt !== 'string'; };
+    var toSend = all.filter(function (a, i) { return !got[i + 1] && !oldOnes(a); });
+    var toMark = all.filter(function (a, i) { return !got[i + 1] && oldOnes(a); });
     if (!toSend.length && !toMark.length) return null;
     var stamp = DL.stampNow();
     return DL.run(['outbox', 'kv'], 'readwrite', function (s) {
       toSend.forEach(function (a) {
         var u = a.u;
-        var fields = { 'Kind': a.kind, 'Name': u.name, 'Contents': u.contents, 'Saved at': stamp };
+        var fields = { 'Kind': a.kind, 'Name': u.name, 'Contents': u.contents,
+                       'Saved at': typeof u.savedAt === 'string' && u.savedAt ? u.savedAt : stamp };
+        var appU = { kind: a.kind, name: u.name, contents: u.contents };
+        if (itemsOk(u.items)) appU.items = u.items;          // the rows, for the sheet's copy for the app (025)
         s.outbox.put({ key: u.id + ':' + u.version + ':' + which, seq: nextSeq(), status: 'waiting',
-                       payload: { kind: 'usual', test: !!link.test, id: u.id, version: u.version, state: 'current', fields: fields,
-                                  app: { page: PAGE_VERSION, usual: { kind: a.kind, name: u.name, contents: u.contents } } } });
+                       payload: { kind: 'usual', test: !!link.test, id: u.id, version: u.version, state: a.st, fields: fields,
+                                  app: { page: PAGE_VERSION, usual: appU } } });
         s.kv.put(true, flagOf(u));
       });
       toMark.forEach(function (a) { s.kv.put(true, flagOf(a.u)); });
     }).then(function () { return toSend.length ? DL.sendWaiting() : null; });
-  }).then(function () { seeding = false; refreshStatus(); }, function () { seeding = false; refreshStatus(); });
+  }).then(function () { seedDone(); }, function () { seedDone(); });
+}
+function seedDone() {
+  seeding = false;
+  refreshStatus();
+  if (seedAgain) { seedAgain = false; seedUsuals(); }
 }
 
 var kickTimer = null;
@@ -2378,6 +2864,7 @@ function renderHeads() {
 
 function render() {
   tidyEnds();
+  renderUsuals();
   var screen = state.screen;
   document.body.classList.toggle('test', !!state.test);
   el('testbar').hidden = !state.test;
@@ -2501,6 +2988,8 @@ function renderIntraday() {
       c.classList.toggle('on', on);
       c.setAttribute('aria-pressed', on ? 'true' : 'false');
     });
+    el('pk-' + kind).hidden = !(pick && pick.pick === null);             // 025, D173
+    el('mu-' + kind).hidden = fixOn('Intraday');                          // not while changing a saved entry (G025-5)
     var wi = el('w-' + kind);
     wi.hidden = !(pick && pick.pick === SOMETHING_ELSE);
     var wanted = pick ? pick.what : '';
@@ -2724,11 +3213,13 @@ function buildButtons() {
     el('t-' + kind).addEventListener('click', function () {
       touch();
       // The usual one is already picked (S8); tapping the button again takes it off.
-      idr()[kind] = idr()[kind] ? null : { pick: USUALS[kind].length ? USUALS[kind][0].name : SOMETHING_ELSE, what: '' };
+      var n = USUALS[kind].length;      // one: picked at once; two or more: none until he picks (025, D173); none: Something else
+      idr()[kind] = idr()[kind] ? null : { pick: n === 1 ? USUALS[kind][0].name : (n ? null : SOMETHING_ELSE), what: '' };
       settle();
       storeDraft(true);
       render();
     });
+    el('mu-' + kind).addEventListener('click', function () { openUsuals(kind); });     // 025
     el('w-' + kind).setAttribute('maxlength', String(WHAT_MAX));
     el('w-' + kind).addEventListener('input', function () {
       touch();
@@ -3324,6 +3815,7 @@ function wire() {
     render();
   });
   el('error').addEventListener('click', function () { el('error').hidden = true; });
+  wireUsuals();      // 025
 
   window.addEventListener('online', kick);
   // A link opened while the page is already open in this tab (W3 of the checks).
@@ -3349,7 +3841,7 @@ function wire() {
   ['click', 'input', 'change'].forEach(function (type) {
     document.addEventListener(type, function (e) {
       var t = e.target;
-      if (!t || !t.closest || !t.closest('main') || t.closest('#savedbar, #error, #status, #save, #nothing, #else, #cancelfix, #fixbanner')) return;
+      if (!t || !t.closest || !t.closest('main') || t.closest('#savedbar, #error, #status, #save, #nothing, #else, #cancelfix, #fixbanner, #sc-Usuals, .mubtn')) return;
       var k = screenKey(state.screen);
       state.edits[k] = (state.edits[k] || 0) + 1;
     }, true);

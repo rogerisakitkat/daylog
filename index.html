@@ -29,6 +29,8 @@
 <main>
   <div id="status" class="status" aria-live="polite"></div>
   <div id="error" class="error" hidden></div>
+  <!-- My usual ones (increment 025): shakes and medicine sets, changed, added or no longer used (D170 to D175) -->
+  <section id="sc-Usuals" class="usuals" hidden></section>
 
   <div id="savedbar" class="savedbar" hidden>
     <p><b id="savedtitle"></b><br><span id="savedwhat"></span></p>
@@ -99,13 +101,17 @@
     </div>
     <div id="p-Shake" class="panel" hidden>
       <div class="t">Shake</div>
+      <div class="pnote" id="pk-Shake" hidden>Pick one.</div>
       <div id="c-Shake"></div>
       <input id="w-Shake" class="box line inpanel" type="text" placeholder="What was it?" aria-label="What shake was it?" hidden>
+      <button type="button" class="btn mubtn" id="mu-Shake">Change my usual ones</button>
     </div>
     <div id="p-Medicine" class="panel" hidden>
       <div class="t">Medicine</div>
+      <div class="pnote" id="pk-Medicine" hidden>Pick one.</div>
       <div id="c-Medicine"></div>
       <input id="w-Medicine" class="box line inpanel" type="text" placeholder="What was it?" aria-label="What medicine was it?" hidden>
+      <button type="button" class="btn mubtn" id="mu-Medicine">Change my usual ones</button>
     </div>
     <div id="p-Liquids" class="panel" hidden>
       <div class="t">Liquids: tick any</div>
