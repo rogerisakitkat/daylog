@@ -110,8 +110,16 @@
  * 023-3 (D157; Agent Z, W1): before 5:00 AM the grey box names the day ("Saturday's Morning entry is saved") and on
  * Morning says a new Morning can be saved from 5:00 AM.
  * 023-4 (Agent Z's recheck, W5): Cancel also takes away the line saying another entry is being changed (G023-5).
+ * 024 (2026-10-12): tapping Other opens "Other: tick any" with Shower, Alcohol, Chores and Something else, like
+ * Liquids (R100, D163, D165). The three have no box of their own; words about them go in Comments (D166). Something
+ * else shows the Other box as before, its words kept apart from Comments (R61). Saved as "Yes" in the sheet's Shower,
+ * Alcohol and Chores columns. Tapping Other again takes the ticks off and keeps the Other words. Stored on the phone
+ * inside the draft's "other" part (panel, shower, alcohol, chores); a screen kept by 023-4 with Other tapped opens
+ * with the panel and Something else; page 023-4 reads a screen kept by 024 without the ticks (the way back).
+ * 024-2 (Agent AA, W1): a change in progress stored by 023-4 or earlier (its Other part has no ticks) takes the ticks
+ * from the entry being changed, so a Save changes never takes off ticks he did not touch.
  */
-var PAGE_VERSION = '023-4';
+var PAGE_VERSION = '024-2';
 var SCREENS = ['Morning', 'Intraday', 'Evening'];
 var SCORE_ROWS = ['Mind', 'Body', 'Balance'];
 var MORNING_SCORES = [{ label: 'Quality', key: 'Sleep quality' }, { label: 'Amount', key: 'Sleep amount' }];
@@ -151,6 +159,10 @@ var LIQUIDS = [{ name: 'Coffee', key: 'coffee', column: 'Coffee' },
                { name: 'Water', key: 'water', column: 'Water' },
                { name: SOMETHING_ELSE, key: 'other', column: 'Other liquid' }];
 var WORKOUT_KINDS = ['Walk', 'Weights or resistance', 'Stretches', 'Bike, rower or similar'];   // R52
+// The ticks under Other (024, R100); Something else is the Other box (other.on), as before.
+var OTHER_TICKS = [{ name: 'Shower', key: 'shower', column: 'Shower' },
+                   { name: 'Alcohol', key: 'alcohol', column: 'Alcohol' },
+                   { name: 'Chores', key: 'chores', column: 'Chores' }];
 
 var state = {
   screen: 'Intraday',             // the page always opens on Intraday (R74)
@@ -267,7 +279,8 @@ function endMoment(run, hhmm, now) {
 function emptyDraft() {
   return { fixed: null, scores: { Mind: null, Body: null, Balance: null },
            comments: '', notable: false, why: '', personal: false,
-           Shake: null, Medicine: null, liquids: null, liqWhat: '', food: { on: false, text: '' }, other: { on: false, text: '' },
+           Shake: null, Medicine: null, liquids: null, liqWhat: '', food: { on: false, text: '' },
+           other: { on: false, text: '', panel: false, shower: false, alcohol: false, chores: false },
            workout: null, endTick: false, endAns: null };
 }
 function emptyMorning() {
@@ -283,12 +296,32 @@ function fillDraft(d) {
   var e = emptyDraft();
   Object.keys(e).forEach(function (k) { if (d[k] === undefined) d[k] = e[k]; });
   if (!d.other || typeof d.other !== 'object') d.other = { on: false, text: '' };
+  // 024: the panel and its ticks. A screen kept by 023-4 or earlier with Other tapped opens with the panel open and
+  // Something else ticked, its words in the box. A tick never hides: any tick opens the panel.
+  d.other.on = d.other.on === true;
+  if (typeof d.other.text !== 'string') d.other.text = '';
+  if (typeof d.other.panel !== 'boolean') d.other.panel = d.other.on;
+  OTHER_TICKS.forEach(function (t) { if (typeof d.other[t.key] !== 'boolean') d.other[t.key] = false; });
+  if (d.other.on || otherTicked(d)) d.other.panel = true;
   if (!d.food || typeof d.food !== 'object') d.food = { on: false, text: '' };
   // A screen kept by page 007-3 or earlier with Coffee tapped: Coffee is picked under Liquids.
   if (d.coffee === true && !d.liquids) d.liquids = { coffee: true, water: false, other: false, what: '' };
   delete d.coffee;
   if (d.liquids && typeof d.liquids !== 'object') d.liquids = null;
   return d;
+}
+function otherTicked(dr) {
+  return !!dr.other && OTHER_TICKS.some(function (t) { return dr.other[t.key] === true; });
+}
+// "A and B", "A, B and C" (as Liquids are named).
+function joinAnd(a) { return a.length === 1 ? a[0] : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1]; }
+// How Other reads in the Saved bar and today's list (024): "Other · Shower and Chores"; Something else is named
+// only next to a tick, so an entry with only Other words reads "Other", as before (G024-3). Null: nothing under Other.
+function otherName(f) {
+  var t = OTHER_TICKS.filter(function (x) { return f[x.column] === 'Yes'; }).map(function (x) { return x.name; });
+  if (!t.length) return f['Other'] !== undefined ? 'Other' : null;
+  if (f['Other'] !== undefined) t.push(SOMETHING_ELSE);
+  return 'Other · ' + joinAnd(t);
 }
 function liquidsPicked(dr) {
   return !!dr.liquids && (dr.liquids.coffee || dr.liquids.water || dr.liquids.other);
@@ -390,7 +423,7 @@ function anyValue(o) { return Object.keys(o).some(function (k) { return o[k] !==
 function hasAnythingOf(screen, dr) {
   if (screen === 'Morning') return anyValue(dr.times) || anyValue(dr.scores) || !!dr.phone || dr.words !== '';
   if (screen === 'Evening') return anyValue(dr.scores) || anyValue(dr.times) || dr.notable || dr.why !== '' || !!dr.endAns;
-  return hasContent(dr) || dr.personal || dr.comments !== '' || (dr.notable && dr.why !== '') || dr.other.on ||
+  return hasContent(dr) || dr.personal || dr.comments !== '' || (dr.notable && dr.why !== '') || dr.other.on || dr.other.panel ||
          !!dr.liquids || dr.food.on ||
          !!dr.workout || !!dr.endTick || !!dr.endAns;
 }
@@ -412,7 +445,7 @@ function settle() { settleOf(state.screen, cur()); }
 // withoutEnd: what makes a new entry (the End of a workout is a version of its own row).
 function hasContent(dr, withoutEnd) {
   return SCORE_ROWS.some(function (k) { return dr.scores[k] !== null; }) || hasText(dr.comments) || dr.notable ||
-         !!dr.Shake || !!dr.Medicine || liquidsPicked(dr) || dr.food.on || (dr.other.on && hasText(dr.other.text)) ||
+         !!dr.Shake || !!dr.Medicine || liquidsPicked(dr) || dr.food.on || (dr.other.on && hasText(dr.other.text)) || otherTicked(dr) ||
          !!(dr.workout && dr.workout.kind) ||
          (!withoutEnd && (!!(dr.endTick && state.running) || endAnswered(dr)));
 }
@@ -533,8 +566,17 @@ function fp(k, v) {
   return stable(v);
 }
 // A change in progress as the page uses it: its screen with every part (019).
+// A change in progress stored by page 023-4 or earlier has no ticks under Other: they are taken from the entry being
+// changed (orig), before fillDraft would read them as unticked (024-2; Agent AA, W1).
+function ticksFromOrig(v) {
+  var o = v.dr && v.dr.other;
+  if (!o || typeof o !== 'object' || !isObj(v.orig)) return;
+  if (OTHER_TICKS.some(function (t) { return typeof o[t.key] === 'boolean'; })) return;
+  OTHER_TICKS.forEach(function (t) { o[t.key] = v.orig[t.column] === 'Yes'; });
+}
 function normFix(v) {
   var scr = fixScreenOf(v);
+  if (scr === 'Intraday') ticksFromOrig(v);
   var d = scr === 'Intraday' ? fillDraft(v.dr) : fillOther(v.sdr !== undefined ? v.sdr : v.dr, emptyOf(scr));
   return { id: v.id, base: v.base, test: !!v.test, orig: v.orig, screen: scr, dr: d, opened: v.opened === undefined ? null : v.opened };
 }
@@ -871,6 +913,7 @@ function fieldsFor(dr, savedAt) {
     f['Food or snack'] = 'Yes';
     if (hasText(dr.food.text)) f['Food or snack, what'] = dr.food.text;
   }
+  OTHER_TICKS.forEach(function (t) { if (dr.other[t.key] === true) f[t.column] = 'Yes'; });     // 024 (R100)
   if (dr.other.on && hasText(dr.other.text)) f['Other'] = dr.other.text;
   return tailFields(f, dr, savedAt);
 }
@@ -955,7 +998,8 @@ function summary(f) {
   // "Coffee, Water and Something else", so Food and Other after it do not read as drinks (Agent C, W1).
   if (liq.length) bits.push('Liquids · ' + (liq.length === 1 ? liq[0] : liq.slice(0, -1).join(', ') + ' and ' + liq[liq.length - 1]));
   if (f['Food or snack'] === 'Yes') bits.push('Food');
-  if (f['Other'] !== undefined) bits.push('Other');
+  var oName = otherName(f);
+  if (oName) bits.push(oName);
   var scored = SCORE_ROWS.filter(function (k) { return typeof f[k] === 'number'; });
   scored.forEach(function (k) { bits.push(k + ' ' + signed(f[k])); });
   if (scored.length) SCORE_ROWS.forEach(function (k) { if (scored.indexOf(k) < 0) bits.push(k + ' not scored'); });
@@ -1284,7 +1328,8 @@ function undo() {
 // (for example "Workout ended").
 var MADE_BY_SCREEN = ['Log day', 'Time', 'Screen', 'Mind', 'Body', 'Balance', 'Comments', 'Notable', 'Notable why', 'Personal',
                       'Shake', 'Shake contents', 'Medicine', 'Medicine contents', 'Workout', 'Coffee', 'Water', 'Other liquid',
-                      'Other liquid, what', 'Food or snack', 'Food or snack, what', 'Other', 'Calendar date', 'UTC offset', 'Saved at'];
+                      'Other liquid, what', 'Food or snack', 'Food or snack, what', 'Other', 'Shower', 'Alcohol', 'Chores',
+                      'Calendar date', 'UTC offset', 'Saved at'];
 function versionsRange(id) { return IDBKeyRange.bound(id + ':', id + ':￿'); }
 function newestOf(list) {
   var top = null;
@@ -1315,7 +1360,10 @@ function fixDraftFrom(f) {
              what: typeof f['Other liquid, what'] === 'string' ? f['Other liquid, what'] : '' };
   if (lq.coffee || lq.water || lq.other) d.liquids = lq; else d.liqWhat = lq.what;
   d.food = { on: f['Food or snack'] === 'Yes', text: typeof f['Food or snack, what'] === 'string' ? f['Food or snack, what'] : '' };
-  d.other = { on: f['Other'] !== undefined, text: typeof f['Other'] === 'string' ? f['Other'] : '' };
+  var oth = { on: f['Other'] !== undefined, text: typeof f['Other'] === 'string' ? f['Other'] : '' };
+  OTHER_TICKS.forEach(function (t) { oth[t.key] = f[t.column] === 'Yes'; });
+  oth.panel = oth.on || OTHER_TICKS.some(function (t) { return oth[t.key]; });
+  d.other = oth;
   return d;
 }
 // The Morning or Evening screen filled in from a saved entry's fields (021).
@@ -2075,7 +2123,9 @@ function listParts(f) {
     if (f['Other liquid, what'] !== undefined) words.push(['Liquids: ', f['Other liquid, what']]);
     if (f['Food or snack'] === 'Yes') title.push('Food');
     if (f['Food or snack, what'] !== undefined) words.push(['Food: ', f['Food or snack, what']]);
-    if (f['Other'] !== undefined) { title.push('Other'); words.push(['Other: ', f['Other']]); }
+    var oTitle = otherName(f);
+    if (oTitle) title.push(oTitle);
+    if (f['Other'] !== undefined) words.push(['Other: ', f['Other']]);
     var sc = [];
     listScores(f, SCORE_ROWS.map(function (k) { return { key: k, name: k }; }), sc);
     if (sc.length) details.push(sc.join(' · '));
@@ -2521,9 +2571,18 @@ function renderIntraday() {
   el('t-Food').setAttribute('aria-pressed', dr.food.on ? 'true' : 'false');
   el('foodwrap').hidden = !dr.food.on;
   if (el('food').value !== dr.food.text) el('food').value = dr.food.text;
-  el('t-Other').classList.toggle('on', dr.other.on);
-  el('t-Other').setAttribute('aria-pressed', dr.other.on ? 'true' : 'false');
-  el('otherwrap').hidden = !dr.other.on;
+  // Other: the panel of ticks (024, R100); Something else is the Other box.
+  var ot = dr.other;
+  el('t-Other').classList.toggle('on', ot.panel);
+  el('t-Other').setAttribute('aria-pressed', ot.panel ? 'true' : 'false');
+  el('p-Other').hidden = !ot.panel;
+  OTHER_TICKS.concat([{ key: 'se' }]).forEach(function (t) {
+    var c = document.querySelector('#c-Other .choice[data-key="' + t.key + '"]');
+    var on = ot.panel && (t.key === 'se' ? ot.on : ot[t.key] === true);
+    c.classList.toggle('on', on);
+    c.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+  el('otherwrap').hidden = !ot.on;
   if (el('other').value !== dr.other.text) el('other').value = dr.other.text;
 }
 
@@ -2770,13 +2829,41 @@ function buildButtons() {
     settle();
     storeDraft(false);
   });
+  // Other (024, R100): the tap opens the ticks; tapping it again takes them off and keeps the Other words,
+  // as Liquids does (D165).
+  OTHER_TICKS.concat([{ name: SOMETHING_ELSE, key: 'se' }]).forEach(function (t) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'choice';
+    b.setAttribute('data-key', t.key);
+    var n = document.createElement('span'); n.className = 'cn'; n.textContent = t.name; b.appendChild(n);
+    var c = document.createElement('span'); c.className = 'chk'; c.textContent = '✓'; b.appendChild(c);
+    b.addEventListener('click', function () {
+      touch();
+      var o = idr().other;
+      if (!o.panel) return;
+      if (t.key === 'se') o.on = !o.on; else o[t.key] = !o[t.key];
+      el('nothing').hidden = true;
+      settle();
+      storeDraft(true);
+      render();
+      if (t.key === 'se' && o.on) el('other').focus();
+    });
+    el('c-Other').appendChild(b);
+  });
   el('t-Other').addEventListener('click', function () {
     touch();
-    idr().other.on = !idr().other.on;
+    var o = idr().other;
+    if (o.panel) {
+      o.panel = false;
+      o.on = false;
+      OTHER_TICKS.forEach(function (t) { o[t.key] = false; });
+    } else {
+      o.panel = true;
+    }
     settle();
     storeDraft(true);
     render();
-    if (idr().other.on) el('other').focus();
   });
   el('other').setAttribute('maxlength', String(OTHER_MAX));
   el('other').addEventListener('input', function () {
