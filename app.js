@@ -172,8 +172,20 @@
  * goes on (1); a move opened and not changed no longer stops an end, and a changed one is named as a change not kept yet (2); a
  * half-typed move counts as a move for "cannot be changed to a walk" (3); a stored half-typed change is dropped when a move it
  * could point at was left out as unusable (4).
+ * 029 (2026-10-13, session 27): a usual shake or medicine set changed for one entry is recorded as "Custom shake" or "Custom
+ * medicine", the usual one's name in a new column "Shake from" or "Medicine from" (R114, D211, D212, D216); today's list
+ * reads "Shake · Custom shake", then "from <its usual one>; changed for this shake: ..." (D217), and the green bar "Shake · Custom shake"
+ * (G029-4). On the yellow screen a custom entry opens on the usual one it started from, as 026 does (G029-2). An entry
+ * recorded the old way (the usual one's name with its "changed" column filled) reads the new way in the list and is saved the
+ * new way in a new version (G029-3); saved untouched it is not a change. "Custom shake" and "Custom medicine" cannot be names of
+ * usual ones (G029-5). Tapping Medicine ticks nothing, however many sets are stored (R104 as changed, G029-6); Shake is as
+ * before. The draft's form is unchanged, so page 028-4 (the way back) reads it.
+ * 029-2 (Agent AF): a change in progress kept by page 028-4 (the way back) with its yellow screen's "Custom shake" or "Custom
+ * medicine" choice ticked is read as this page opens that entry, on the usual one it started from with its change, so Save
+ * changes keeps what it recorded (W1); a "from" left by page 028-4 on an entry that is not custom does not make an untouched
+ * Save changes a change (N3).
  */
-var PAGE_VERSION = '028-4';
+var PAGE_VERSION = '029-3';
 var SCREENS = ['Morning', 'Intraday', 'Evening'];
 var SCORE_ROWS = ['Mind', 'Body', 'Balance'];
 var MORNING_SCORES = [{ label: 'Quality', key: 'Sleep quality' }, { label: 'Amount', key: 'Sleep amount' }];
@@ -220,6 +232,47 @@ var INVISIBLE = /[\u00AD\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u206A-\u20
 // The ones in use: none until storage has been read, then the stored ones.
 var USUALS = { Shake: [], Medicine: [] };
 var SOMETHING_ELSE = 'Something else';
+// 029 (R114, D211, D212, D216): a usual one changed for one entry is recorded under these, with the name it started
+// from in "<kind> from".
+var CUSTOM = { Shake: 'Custom shake', Medicine: 'Custom medicine' };
+// Whether an entry recorded a usual one changed for that entry: the new way, or the old way (the usual one's name with
+// its "changed" column filled; G029-3).
+function recCustom(o, kind) {
+  return typeof o[kind] === 'string' && o[kind] !== SOMETHING_ELSE && (o[kind] === CUSTOM[kind] || o[kind + ' changed'] !== undefined);
+}
+// The usual one an entry recorded: for a custom one, the name it started from (G029-2); else the name recorded.
+function recName(o, kind) {
+  return o[kind] === CUSTOM[kind] && typeof o[kind + ' from'] === 'string' ? o[kind + ' from'] : o[kind];
+}
+// An entry recorded the old way read the new way, for comparing (G029-3: saved untouched it is not a change).
+function asNewForm(o) {
+  var y = clone(o);
+  ['Shake', 'Medicine'].forEach(function (kind) {
+    if (recCustom(y, kind)) { if (y[kind] !== CUSTOM[kind]) { y[kind + ' from'] = y[kind]; y[kind] = CUSTOM[kind]; } }
+    else delete y[kind + ' from'];          // a "from" left by page 028-4 on an entry that is not custom (029-2; Agent AF, N3)
+  });
+  return y;
+}
+// A change in progress kept by page 028-4 (the way back), whose yellow screen offers a custom entry's label as a choice: that
+// choice read as this page opens the entry, on the usual one it started from with its change (029-2; Agent AF, W1).
+function customPickBack(v) {
+  if (!isObj(v) || !isObj(v.dr) || !isObj(v.orig)) return;
+  ['Shake', 'Medicine'].forEach(function (kind) {
+    var p = v.dr[kind], o = v.orig, nm = recName(o, kind);
+    if (!isObj(p) || p.pick !== CUSTOM[kind] || o[kind] !== CUSTOM[kind] || typeof nm !== 'string' || nm === CUSTOM[kind]) return;
+    var part = { pick: nm, what: '' };
+    if (o[kind + ' changed'] !== undefined) {
+      var m = cxFromRecorded(kind, nm, o[kind + ' contents']);
+      if (m && !cxSame(m)) part.chg = m;
+    }
+    v.dr[kind] = part;
+  });
+}
+// Names a usual one cannot have (G025-2; G029-5): the one it matches, or ''.
+function reservedName(name) {
+  var k = String(name).toLowerCase();
+  return [SOMETHING_ELSE, CUSTOM.Shake, CUSTOM.Medicine].filter(function (x) { return x.toLowerCase() === k; })[0] || '';
+}
 // Liquids (R85): each pick has its own column; Something else also keeps his words.
 var LIQUIDS = [{ name: 'Coffee', key: 'coffee', column: 'Coffee' },
                { name: 'Water', key: 'water', column: 'Water' },
@@ -671,7 +724,7 @@ function ticksFromOrig(v) {
 }
 function normFix(v) {
   var scr = fixScreenOf(v);
-  if (scr === 'Intraday') ticksFromOrig(v);
+  if (scr === 'Intraday') { ticksFromOrig(v); customPickBack(v); }          // 029-2
   var d = scr === 'Intraday' ? fillDraft(v.dr) : fillOther(v.sdr !== undefined ? v.sdr : v.dr, emptyOf(scr));
   return { id: v.id, base: v.base, test: !!v.test, orig: v.orig, screen: scr, dr: d, opened: v.opened === undefined ? null : v.opened };
 }
@@ -1028,6 +1081,8 @@ function fieldsFor(dr, savedAt) {
       f[kind] = usual.name;
       var cx = cxResult(kind, pick);              // changed for this entry only (026, G026-7)
       if (cx && cx.contents !== undefined) {
+        f[kind] = CUSTOM[kind];                   // 029 (R114, G029-1)
+        f[kind + ' from'] = usual.name;           // D216
         f[kind + ' contents'] = cx.contents;
         f[kind + ' changed'] = cx.changed;
       } else {
@@ -1125,9 +1180,9 @@ function summary(f) {
     if (f['Day notable'] === 'Yes') bits.push('day notable');
     return 'Evening: ' + bits.join(', ');
   }
-  if (f['Shake'] !== undefined) bits.push('Shake · ' + f['Shake'] + (f['Shake changed'] !== undefined ? ' changed' : ''));
+  if (f['Shake'] !== undefined) bits.push('Shake · ' + (recCustom(f, 'Shake') ? CUSTOM.Shake : f['Shake']));             // 029 (G029-4)
   if (f['Workout'] !== undefined && f['Workout ended'] === undefined) bits.push(f['Workout'] === MADE_UP ? 'Workout started (made up as I go)' : f['Workout'] + ' started');
-  if (f['Medicine'] !== undefined) bits.push('Medicine · ' + f['Medicine'] + (f['Medicine changed'] !== undefined ? ' changed' : ''));
+  if (f['Medicine'] !== undefined) bits.push('Medicine · ' + (recCustom(f, 'Medicine') ? CUSTOM.Medicine : f['Medicine']));     // 029
   var liq = LIQUIDS.filter(function (l) { return f[l.column] === 'Yes'; }).map(function (l) { return l.name; });
   // "Coffee, Water and Something else", so Food and Other after it do not read as drinks (Agent C, W1).
   if (liq.length) bits.push('Liquids · ' + (liq.length === 1 ? liq[0] : liq.slice(0, -1).join(', ') + ' and ' + liq[liq.length - 1]));
@@ -1508,6 +1563,7 @@ function undo() {
 // (for example "Workout ended").
 var MADE_BY_SCREEN = ['Log day', 'Time', 'Screen', 'Mind', 'Body', 'Balance', 'Comments', 'Notable', 'Notable why', 'Personal',
                       'Shake', 'Shake contents', 'Shake changed', 'Medicine', 'Medicine contents', 'Medicine changed',
+                      'Shake from', 'Medicine from',                                                   // 029
                       'Workout', 'Coffee', 'Water', 'Other liquid',
                       'Other liquid, what', 'Food or snack', 'Food or snack, what', 'Other', 'Shower', 'Alcohol', 'Chores',
                       'Calendar date', 'UTC offset', 'Saved at'];
@@ -1534,10 +1590,11 @@ function fixDraftFrom(f) {
   d.personal = f['Personal'] === 'Yes';
   USUAL_KINDS.forEach(function (kind) {
     if (typeof f[kind] !== 'string') return;
-    d[kind] = { pick: f[kind], what: f[kind] === SOMETHING_ELSE && typeof f[kind + ' contents'] === 'string' ? f[kind + ' contents'] : '' };
+    var nm = recName(f, kind);                    // 029: a custom one opens on the usual one it started from (G029-2)
+    d[kind] = { pick: nm, what: f[kind] === SOMETHING_ELSE && typeof f[kind + ' contents'] === 'string' ? f[kind + ' contents'] : '' };
     // 026: recorded with a change for that entry: its rows open, mapped onto the usual one as it is now.
     if (f[kind] !== SOMETHING_ELSE && f[kind + ' changed'] !== undefined) {
-      var m = cxFromRecorded(kind, f[kind], f[kind + ' contents']);
+      var m = cxFromRecorded(kind, nm, f[kind + ' contents']);
       if (m && !cxSame(m)) d[kind].chg = m;
     }
   });
@@ -1585,7 +1642,7 @@ function calDateOf(f) {
 function fixExtra(kind) {
   var fx = state.fix;
   if (!fx) return null;
-  var name = fx.orig[kind];
+  var name = recName(fx.orig, kind);             // 029 (G029-2)
   if (typeof name !== 'string' || name === SOMETHING_ELSE) return null;
   if (USUALS[kind].some(function (u) { return u.name === name; })) return null;
   return { name: name, contents: typeof fx.orig[kind + ' contents'] === 'string' ? fx.orig[kind + ' contents'] : '' };
@@ -1610,7 +1667,9 @@ function fixFields(fx, now) {
   // that time, unless its rows were touched here (026).
   USUAL_KINDS.forEach(function (kind) {
     if (keptAsRecorded(fx, kind)) {
-      f[kind] = o[kind];
+      f[kind] = recCustom(o, kind) ? CUSTOM[kind] : o[kind];             // 029: the new way (G029-3)
+      var from = recName(o, kind);
+      if (recCustom(o, kind) && typeof from === 'string' && from !== CUSTOM[kind]) f[kind + ' from'] = from; else delete f[kind + ' from'];
       if (o[kind + ' contents'] !== undefined) f[kind + ' contents'] = o[kind + ' contents']; else delete f[kind + ' contents'];
       if (o[kind + ' changed'] !== undefined) f[kind + ' changed'] = o[kind + ' changed']; else delete f[kind + ' changed'];
     }
@@ -1798,7 +1857,7 @@ function saveFix() {
   }
   var now = new Date();
   var fields = fixFields(fx, now);
-  if (sameFields(fields, fx.orig)) { cancelFix('Nothing was changed, so nothing was saved.'); return; }
+  if (sameFields(fields, fx.orig) || sameFields(fields, asNewForm(fx.orig))) { cancelFix('Nothing was changed, so nothing was saved.'); return; }     // 029 (G029-3)
   var startAt = dr.fixed.at || momentOf(dr.fixed.date, dr.fixed.time).getTime();
   // The end as it now stands: a new end typed (021) at the moment worked out when it was typed, else the saved one.
   var ne = walk ? dr.newEnd : null;
@@ -2696,7 +2755,7 @@ function cxStart(kind, p) {
   var u = usualOf(kind, p.pick);
   if (!u) return null;
   var fx = fixOn('Intraday') ? state.fix : null;
-  if (fx && fx.orig[kind] === p.pick && p.touched !== true) {
+  if (fx && recName(fx.orig, kind) === p.pick && p.touched !== true) {          // 029 (G029-2)
     var m = cxFromRecorded(kind, p.pick, fx.orig[kind + ' contents']);
     if (m) return m;
   }
@@ -2708,10 +2767,10 @@ function cxStart(kind, p) {
 // touched, and either it recorded no change (G40), or its recorded change is what the rows show, or the rows cannot show
 // it (could not be read back, AC-W4; or do not fit the usual one as it is now, AC-W6). A recorded change whose rows were
 // closed by another pick or by Shake off and on is not kept: what the screen shows is saved (AC-W2).
-function recordedRows(kind, o) { var m = cxFromRecorded(kind, o[kind], o[kind + ' contents']); return m && !cxSame(m) ? m : null; }
+function recordedRows(kind, o) { var m = cxFromRecorded(kind, recName(o, kind), o[kind + ' contents']); return m && !cxSame(m) ? m : null; }     // 029
 function keptAsRecorded(fx, kind) {
   var o = fx.orig, p = fx.dr && fx.dr[kind];
-  if (!p || typeof o[kind] !== 'string' || o[kind] === SOMETHING_ELSE || p.pick !== o[kind] || p.touched === true) return false;
+  if (!p || typeof o[kind] !== 'string' || o[kind] === SOMETHING_ELSE || p.pick !== recName(o, kind) || p.touched === true) return false;     // 029
   if (o[kind + ' changed'] === undefined) return true;
   if (cxOf(kind, p) || p.chgLost === true) return true;
   return !recordedRows(kind, o);
@@ -3202,7 +3261,7 @@ function muSave() {
   var err = '';
   if (!name) err = 'Give it a name.';
   else if (name.length > USUAL_NAME_TYPED_MAX) err = 'A name can be up to ' + USUAL_NAME_TYPED_MAX + ' characters.';
-  else if (name.toLowerCase() === SOMETHING_ELSE.toLowerCase()) err = '“' + SOMETHING_ELSE + '” can’t be used as a name.';
+  else if (reservedName(name)) err = '“' + reservedName(name) + '” can’t be used as a name.';          // 029 (G029-5)
   else if (USUALS[kind].some(function (u) { return u.id !== m.id && nameKey(u.name) === name.toLowerCase(); })) {
     err = 'You already have a ' + w.one + ' called ' + name + '. Pick another name.';
   } else if (!rows.length) err = 'Add at least one item.';
@@ -3585,9 +3644,15 @@ function listParts(f) {
   } else {
     ['Shake', 'Medicine'].forEach(function (k) {
       if (f[k] === undefined) return;
-      title.push(k + ' · ' + f[k]);
+      var cu = recCustom(f, k), from = recName(f, k);                                               // 029 (D217, G029-3)
+      title.push(k + ' · ' + (cu ? CUSTOM[k] : f[k]));
       if (f[k] === SOMETHING_ELSE && f[k + ' contents'] !== undefined) words.push([k + ': ', f[k + ' contents']]);
-      else if (f[k + ' changed'] !== undefined) details.push(CX_WORDS[k].list + f[k + ' changed']);      // 026
+      else if (cu) {
+        var cb = [];
+        if (typeof from === 'string' && from !== CUSTOM[k]) cb.push('from ' + from);
+        if (f[k + ' changed'] !== undefined) cb.push(CX_WORDS[k].list + f[k + ' changed']);      // 026
+        if (cb.length) details.push(cb.join('; '));
+      }
     });
     if (f['Workout'] !== undefined) {
       title.push('Workout · ' + f['Workout']);
@@ -4222,8 +4287,10 @@ function buildButtons() {
     el('t-' + kind).addEventListener('click', function () {
       touch();
       // The usual one is already picked (S8); tapping the button again takes it off.
-      var n = USUALS[kind].length;      // one: picked at once; two or more: none until he picks (025, D173); none: Something else
-      idr()[kind] = idr()[kind] ? null : { pick: n === 1 ? USUALS[kind][0].name : (n ? null : SOMETHING_ELSE), what: '' };
+      // One shake: picked at once; two or more: none until he picks (025, D173); none: Something else. Medicine: none until
+      // he picks, however many sets (029, R104 as changed, G029-6).
+      var n = USUALS[kind].length;
+      idr()[kind] = idr()[kind] ? null : { pick: n === 1 && kind === 'Shake' ? USUALS[kind][0].name : (n ? null : SOMETHING_ELSE), what: '' };
       settle();
       storeDraft(true);
       render();
