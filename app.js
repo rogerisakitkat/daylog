@@ -150,8 +150,30 @@
  * kept change compared with its usual one by What, Amount and Unit only (R-N2).
  * 026-4 (Agent AC's second recheck, R2-W1): Half worked out exactly on the digits, then rounded half-up to 3 decimals
  * unless that gives 0, when the exact half is kept.
+ * 028 (2026-10-13): the Workout screen (step 7, first part; D199 to D206; round 3 pictures 1 to 3; increment 028's drawings 1
+ * to 6). Workout offers Walk and "Make it up as I go" (recorded as "Made up as I go", D204); Weights or resistance, Stretch
+ * and Bike, rower or similar are kinds of move (R52, R57 to R59). While a workout that is not a walk runs, Open shows the
+ * Workout screen: its moves, + Add a move (the kind, the name with names used before, D205, and only that kind's boxes),
+ * a move tapped to change or take out, and End workout, which saves at once (R67, G028-1) with Undo (G028-5). The moves
+ * are kept on the phone as they are typed, in "draft-workout" { id, moves, edit }, compared before writing like the
+ * half-filled screens (016); however the workout ends, its moves are saved with it (G028-2): the sheet's Moves column, one
+ * move per line, and the copy for the app carries them as data (G028-8). Page 026-4 (the way back) ignores
+ * "draft-workout" and ends such a workout without its moves.
+ * 028-2: up to 40 moves in a workout and names of up to 60 characters, and the moves as data left out of the copy for the app
+ * if that copy would be longer than the sheet takes, so an entry is never turned away for its moves (the Moves column has them).
+ * 028-3 (Agent AE): an end made on Intraday or at Evening while a move is half-typed on the Workout screen is stopped with a line
+ * saying so, as End workout there is (W1); a stored list of moves is put right when read (moves or a half-typed move the page
+ * could not use are left out), and only a value that is not a list of moves at all counts as unreadable; that never stops a walk
+ * from ending, and a workout ends without its moves at a second Save (W2); what is typed in a box is cut to its length (W2);
+ * the Workout screen says when the phone could not keep the moves (N4); a workout with moves cannot be changed to a walk on the
+ * yellow screen (N5); End workout on the Workout screen asks once more for a workout begun on an earlier day (N6); the "Changes
+ * saved" bar says Workout for one made up as he went (N8a); Running since gets its date after midnight (N8b); "12." is 12 (N8c).
+ * 028-4 (Agent AE's recheck): the note that the moves could not be kept is put on the screen without drawing it again, so typing
+ * goes on (1); a move opened and not changed no longer stops an end, and a changed one is named as a change not kept yet (2); a
+ * half-typed move counts as a move for "cannot be changed to a walk" (3); a stored half-typed change is dropped when a move it
+ * could point at was left out as unusable (4).
  */
-var PAGE_VERSION = '026-4';
+var PAGE_VERSION = '028-4';
 var SCREENS = ['Morning', 'Intraday', 'Evening'];
 var SCORE_ROWS = ['Mind', 'Body', 'Balance'];
 var MORNING_SCORES = [{ label: 'Quality', key: 'Sleep quality' }, { label: 'Amount', key: 'Sleep amount' }];
@@ -202,7 +224,21 @@ var SOMETHING_ELSE = 'Something else';
 var LIQUIDS = [{ name: 'Coffee', key: 'coffee', column: 'Coffee' },
                { name: 'Water', key: 'water', column: 'Water' },
                { name: SOMETHING_ELSE, key: 'other', column: 'Other liquid' }];
-var WORKOUT_KINDS = ['Walk', 'Weights or resistance', 'Stretches', 'Bike, rower or similar'];   // R52
+// 028: Workout offers Walk and Make it up as I go (D201, D203); the kinds of R52 other than walks are kinds of move.
+// A walk or workout kept with an older kind (pages up to 026-4) keeps it (G028-6).
+var MADE_UP = 'Made up as I go';                                                   // D204
+var WORKOUT_KINDS = ['Walk', MADE_UP];
+var WORKOUT_WORDS = { 'Walk': ['Walk', 'start and End only'], 'Made up as I go': ['Make it up as I go', 'start with no moves, add them as you go'] };
+// The kinds of move (R57 to R59) and the boxes each shows (G032); numbers kept as typed text.
+var MOVE_KINDS = [{ k: 'w', name: 'Weights or resistance', boxes: [['sets', 'Sets'], ['reps', 'Reps'], ['lb', 'Pounds'], ['sec', 'Seconds held']], each: true },
+                  { k: 's', name: 'Stretch', boxes: [], each: false },
+                  { k: 'b', name: 'Bike, rower or similar', boxes: [['min', 'Minutes'], ['level', 'Level'], ['speed', 'Speed']], each: false }];
+var MOVE_FIELDS = ['sets', 'reps', 'lb', 'sec', 'min', 'level', 'speed'];
+var MOVES_MAX = 40;               // moves in one workout (with names of up to 60, the entry stays well within what the sheet takes)
+var MOVE_NAME_MAX = 60;
+var MOVE_NUM_MAX = 7;             // characters in one number box
+var NAMES_SHOWN = 8;              // names used before (G028-4)
+var KEY_WK = 'draft-workout';     // the moves of the workout running, as typed (028)
 // The ticks under Other (024, R100); Something else is the Other box (other.on), as before.
 var OTHER_TICKS = [{ name: 'Shower', key: 'shower', column: 'Shower' },
                    { name: 'Alcohol', key: 'alcohol', column: 'Alcohol' },
@@ -239,7 +275,9 @@ var state = {
   shown: null,                    // today's saved Morning and Evening entries, shown greyed (023): { day, Morning, Evening }
   mu: null,                       // My usual ones while open (025), in memory only (G025-1): { view: 'list' | 'edit', ... }
   usualsKnown: '-',               // the stored usual ones as this page last read or wrote them, as stable() (025)
-  usualsStored: null              // that stored value, when readable (025): { Shake, Medicine, removed }
+  usualsStored: null,             // that stored value, when readable (025): { Shake, Medicine, removed }
+  wkd: null,                      // the moves of the workout running (028): { id, moves, edit }, kept as "draft-workout"
+  wk: null                        // the Workout screen while open (028), in memory only: { rev, note, bad, names }
 };
 var KEY_FIX = 'draft-fix';        // where a change in progress is kept (019)
 
@@ -405,9 +443,10 @@ function storedFix(f) {
   return { id: f.id, base: f.base, test: f.test, orig: f.orig, screen: f.screen, dr: null, sdr: f.dr, opened: f.opened };
 }
 // The four things kept like half-filled screens, by their key in storage (019 adds KEY_FIX).
-var SLOTS = ['draft', 'draft-Morning', 'draft-Evening', KEY_FIX];
+var SLOTS = ['draft', 'draft-Morning', 'draft-Evening', KEY_FIX, KEY_WK];     // 028 adds the moves of the workout running
 function valueOfKey(k) {
   if (k === KEY_FIX) return state.fix ? storedFix(state.fix) : undefined;
+  if (k === KEY_WK) return state.wkd || undefined;
   return k === 'draft' ? state.draft : (k === 'draft-Morning' ? state.mdraft : state.edraft);
 }
 // The key his taps and typing on a screen change: the change in progress while there is one.
@@ -529,7 +568,7 @@ function storeDraft(now) {
       return { k: k, v: v === undefined ? undefined : clone(v), gen: state.gen[k], known: state.known[k], ed: state.edits[k] || 0 };
     }).filter(function (x) {
       // No change in progress, and none stored as far as this page knows: nothing to write (019).
-      return !(x.k === KEY_FIX && x.v === undefined && (x.known === undefined || x.known === '-'));
+      return !((x.k === KEY_FIX || x.k === KEY_WK) && x.v === undefined && (x.known === undefined || x.known === '-'));
     });
     if (!w.length) return Promise.resolve();
     var lostMine = false;
@@ -549,7 +588,7 @@ function storeDraft(now) {
     }).then(function (res) {
       w.forEach(function (x) { if (res.wrote && Object.prototype.hasOwnProperty.call(res.wrote, x.k)) state.storedEdits[x.k] = x.ed; });
       afterGuarded(res, lostMine ? 'typed' : 'other');
-    }).catch(function () { /* shown at Save */ });
+    }).catch(function () { if (state.wk) wkNoteQuiet(WK_NOT_KEPT); /* else shown at Save */ });
   };
   if (now) return write();
   draftTimer = setTimeout(write, 300);
@@ -600,7 +639,7 @@ function sameAsKnown(k, v) {
 // them it reads them all again in the same storage step and compares each with
 // what it last read or wrote (state.known); one that another open copy of the
 // page changed is never written over: the stored one is taken instead (Q40).
-var GUARDED = ['draft', 'draft-Morning', 'draft-Evening', 'running', 'lastSaved', KEY_FIX];   // 019 adds the change in progress
+var GUARDED = ['draft', 'draft-Morning', 'draft-Evening', 'running', 'lastSaved', KEY_FIX, KEY_WK];   // 019 adds the change in progress, 028 the moves
 // What is compared: the value written out with its parts in a fixed order. A half-filled
 // screen is compared as the page would show it, so a screen never stored, an empty one
 // and one kept by an older page without the newer parts count the same when they hold
@@ -618,6 +657,7 @@ function fp(k, v) {
   if (k === 'draft-Morning') return stable(fillOther(v === undefined ? undefined : clone(v), emptyMorning()));
   if (k === 'draft-Evening') return stable(fillOther(v === undefined ? undefined : clone(v), emptyEvening()));
   if (k === KEY_FIX) return v === undefined || v === null ? '-' : stable(normFix(clone(v)));
+  if (k === KEY_WK) return v === undefined || v === null ? '-' : stable(normWk(clone(v)));
   return stable(v);
 }
 // A change in progress as the page uses it: its screen with every part (019).
@@ -784,6 +824,7 @@ function take(k, v) {
     if (k === 'running') state.running = null;
     else if (k === 'lastSaved') state.lastSaved = null;
     else if (k === KEY_FIX) state.fix = null;
+    else if (k === KEY_WK) state.wkd = null;
     else setDraftOf(k === 'draft' ? 'Intraday' : k.slice(6), emptyOf(k === 'draft' ? 'Intraday' : k.slice(6)));
     return false;
   }
@@ -796,6 +837,7 @@ function take(k, v) {
   else if (k === 'draft-Morning') state.mdraft = fillOther(v, emptyMorning());
   else if (k === 'draft-Evening') state.edraft = fillOther(v, emptyEvening());
   else if (k === KEY_FIX) { state.fix = v ? normFix(v) : null; state.fixConfirm = null; }
+  else if (k === KEY_WK) { state.wkd = v ? normWk(v) : null; if (state.wk) state.wk.rev = wkRev(); }
   return true;
 }
 
@@ -816,6 +858,20 @@ function endAnsOk(a) {
 }
 // A new end typed for an ended walk or workout being changed (021, R95).
 function newEndOk(x) { return isObj(x) && (x.unknown === true || (isHM(x.time) && isNum(x.at) && noneOr(x.date, isDay) && noneOr(x.from, isNum))); }
+// The moves of the workout running (028): what the page writes, and nothing else.
+function numOk(x) { return x === undefined || (typeof x === 'string' && x.length <= MOVE_NUM_MAX + 5); }
+function moveOk(m) {
+  return isObj(m) && moveKind(m.k) !== null && typeof m.name === 'string' && m.name.length <= MOVE_NAME_MAX + 20 &&
+         MOVE_FIELDS.every(function (f) { return numOk(m[f]); }) && optBool(m.each);
+}
+function editOk(e) {
+  return isObj(e) && isNum(e.i) && (e.k === null || e.k === undefined || moveKind(e.k) !== null) && optStr(e.name) &&
+         MOVE_FIELDS.every(function (f) { return optStr(e[f]) && (typeof e[f] !== 'string' || e[f].length <= 40); }) && optBool(e.each);
+}
+function wkOk(v) {
+  return isObj(v) && typeof v.id === 'string' && Array.isArray(v.moves) && v.moves.length <= MOVES_MAX &&
+         v.moves.every(moveOk) && noneOr(v.edit, editOk);
+}
 function runningOk(r) {
   return isObj(r) && typeof r.id === 'string' && isNum(r.version) && typeof r.kind === 'string' && isObj(r.fields) &&
          isNum(r.startAt) && isDay(r.startDate) && isHM(r.startTime);
@@ -825,10 +881,11 @@ function runningOk(r) {
 // and Shake and Medicine picks (settleUsualPicks, since 013: an odd pick shows as Something else).
 function kindOk(k, v) {
   if (k === 'running') return runningOk(v);
+  if (k === KEY_WK) return v === null || (isObj(v) && typeof v.id === 'string');      // the rest is put right when read (028-3; Agent AE, W2)
   if (k === 'lastSaved') {
     return isObj(v) && isDay(v.date) && isHM(v.time) && typeof v.summary === 'string' && noneOr(v.until, isNum) && noneOr(v.fixUntil, isNum) &&
            noneOr(v.savedDate, isDay) && noneOr(v.savedTime, isHM) && optStr(v.id) && optBool(v.undone) &&
-           noneOr(v.ended, function (e) { return isObj(e) && isNum(e.version) && runningOk(e.before); });
+           noneOr(v.ended, function (e) { return isObj(e) && isNum(e.version) && runningOk(e.before) && noneOr(e.moves, function (ms) { return Array.isArray(ms) && ms.every(moveOk); }); });
   }
   if (k === 'draft') {
     return isObj(v) && scoresOk(v.scores, SCORE_ROWS) && fixedOk(v.fixed) && optStr(v.comments) && optStr(v.why) &&
@@ -933,6 +990,9 @@ function tidyEnds() {
     if (d.workout && r) d.workout = null;
     if (was) settleOf('Intraday', d);
   }
+  // 028: moves kept for a workout that is no longer running go (it was ended or undone, here or in another copy).
+  if (!state.unread[KEY_WK] && state.wkd && (!r || state.wkd.id !== r.id)) state.wkd = null;
+  if (state.wk && (!r || r.kind === 'Walk' || state.unread[KEY_WK])) state.wk = null;
 }
 
 // ------------------------------------------------------------------ what a Save sends
@@ -1066,7 +1126,7 @@ function summary(f) {
     return 'Evening: ' + bits.join(', ');
   }
   if (f['Shake'] !== undefined) bits.push('Shake · ' + f['Shake'] + (f['Shake changed'] !== undefined ? ' changed' : ''));
-  if (f['Workout'] !== undefined && f['Workout ended'] === undefined) bits.push(f['Workout'] + ' started');
+  if (f['Workout'] !== undefined && f['Workout ended'] === undefined) bits.push(f['Workout'] === MADE_UP ? 'Workout started (made up as I go)' : f['Workout'] + ' started');
   if (f['Medicine'] !== undefined) bits.push('Medicine · ' + f['Medicine'] + (f['Medicine changed'] !== undefined ? ' changed' : ''));
   var liq = LIQUIDS.filter(function (l) { return f[l.column] === 'Yes'; }).map(function (l) { return l.name; });
   // "Coffee, Water and Something else", so Food and Other after it do not read as drinks (Agent C, W1).
@@ -1086,9 +1146,11 @@ function summary(f) {
 // "usuals" in the copy for the app says where the usual ones in use came from
 // (012): "phone" shows the phone holds them in its own storage (D98).
 function payloadFor(entry) {
-  return { kind: 'log', test: entry.test, id: entry.id, version: entry.version, state: entry.state,
-           fields: entry.fields, app: { page: PAGE_VERSION, screen: (entry.fields && entry.fields['Screen']) || 'Intraday',
-                                        usuals: state.usualsFrom || 'not read', fields: entry.fields } };
+  var pl = { kind: 'log', test: entry.test, id: entry.id, version: entry.version, state: entry.state,
+             fields: entry.fields, app: { page: PAGE_VERSION, screen: (entry.fields && entry.fields['Screen']) || 'Intraday',
+                                          usuals: state.usualsFrom || 'not read', fields: entry.fields } };
+  addMoves(pl, entry.moves);        // 028 (G028-8)
+  return pl;
 }
 
 // The screen is cleared at once when Save is tapped, so anything typed next
@@ -1117,7 +1179,7 @@ function save() {
   var dr = cur();
   var run = state.running;
   if (screen === 'Intraday' && dr.workout && !dr.workout.kind) {
-    showNote('Pick what kind of workout it is, or tap Workout again to take it off.');
+    showNote('Pick Walk or Make it up as I go, or tap Workout again to take it off.');
     return;
   }
   if (screen === 'Intraday' && dr.liquids && !liquidsPicked(dr)) {
@@ -1138,6 +1200,14 @@ function save() {
               'Close the page and open it again; if this keeps happening, tell Claude.');
     return;
   }
+  // The moves of the workout running could not be read (028): said once; a second Save ends it without them, leaving the
+  // stored value as it is (015). A walk has no moves, so its end is never stopped by them (028-3; Agent AE, W2).
+  if (state.unread[KEY_WK] && state.running && state.running.kind !== 'Walk' && (dr.endTick || endAnswered(dr)) && state.wkUnreadOk !== state.running.id) {
+    state.wkUnreadOk = state.running.id;
+    showError(WK_UNREAD_END);
+    specificShown = el('error').textContent;
+    return;
+  }
   // How this Save ends the running walk or workout, if it does.
   var endHow = null;
   if (endBoxOn(screen) && endAnswered(dr)) {
@@ -1153,6 +1223,12 @@ function save() {
   // A walk being changed on Intraday is not ended meanwhile (019-2; Agent W, W2).
   if (endHow && state.fix && run && state.fix.id === run.id) {
     showError('You are changing this ' + (run.kind === 'Walk' ? 'walk' : 'workout') + ' on Intraday. Tap Save changes or Cancel there first, then end it here.');
+    specificShown = el('error').textContent;
+    return;
+  }
+  // A move half-typed on the Workout screen is never dropped by an end made here (028-3; Agent AE, W1).
+  if (endHow && run && run.kind !== 'Walk' && wkOf(run) && editPending(wkOf(run))) {
+    showError(wkHalfText(wkOf(run)));
     specificShown = el('error').textContent;
     return;
   }
@@ -1186,19 +1262,24 @@ function save() {
                      startDate: dr.fixed.date, startTime: dr.fixed.time };
     }
   }
+  var endMoves = null;              // the moves saved with the end (028, G028-2)
   if (endHow) {
     var ef = clone(run.fields);
     ef['Workout ended'] = endHow.unknown ? END_NOT_KNOWN : (endHow.atTop ? dr.fixed.time : endHow.time);
+    var wkn = wkOf(run);
+    if (wkn && wkn.moves.length) { endMoves = clone(wkn.moves); ef['Moves'] = movesText(endMoves); }
     ef['Saved at'] = stampOf(now);
     endV = { key: run.id + ':' + (run.version + 1), id: run.id, version: run.version + 1, state: 'current', test: run.test, fields: ef, seq: nextSeq() };
+    if (endMoves) endV.moves = endMoves;
     endOut = { key: endV.key, seq: endV.seq, status: 'waiting', payload: payloadFor(endV) };
+    var rk = runName(run.kind), mv = endMoves ? ', ' + movesCount(endMoves.length) : '';
     if (endHow.atTop) {
-      bits.push(run.kind + ' ended (' + whenOf(run.startDate, run.startTime, dr.fixed.date) + ' to ' + ampm(dr.fixed.time) + ')');
+      bits.push(rk + ' ended (' + whenOf(run.startDate, run.startTime, dr.fixed.date) + ' to ' + ampm(dr.fixed.time) + ')' + mv);
     } else if (endHow.unknown) {
-      bits.push(run.kind + ' from ' + whenOf(run.startDate, run.startTime, dateStr(now)) + ' ended, end time not known');
+      bits.push(rk + ' from ' + whenOf(run.startDate, run.startTime, dateStr(now)) + ' ended, end time not known' + mv);
     } else {
-      bits.push(run.kind + ' ended (' + whenOf(run.startDate, run.startTime, dateStr(now)) + ' to ' +
-                whenOf(endHow.date, endHow.time, run.startDate) + ')');
+      bits.push(rk + ' ended (' + whenOf(run.startDate, run.startTime, dateStr(now)) + ' to ' +
+                whenOf(endHow.date, endHow.time, run.startDate) + ')' + mv);
     }
     newRunning = null;
   }
@@ -1206,8 +1287,12 @@ function save() {
               screen: screen, savedDate: dateStr(now), savedTime: timeStr(now), until: nextDayStart(now).getTime(),
               started: !!(entry && newRunning && newRunning.id === entry.id),
               ended: endHow ? { id: run.id, version: endV.version, before: run } : null };
+  if (endMoves) bar.ended.moves = endMoves;
   if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
   var saved = dr, runBefore = run;
+  // The moves go with the end (028): written out of storage in the same step, compared first.
+  var wkBefore = state.wkd, wkGo = !!(endHow && wkBefore && wkBefore.id === run.id);
+  var wkGen0 = state.gen[KEY_WK];
   var dk = draftKey(screen);
   // What this Save was worked out from (016): if the walk running or this screen was
   // taken from another open copy since, or another copy changed them in storage,
@@ -1216,16 +1301,21 @@ function save() {
   var ed0 = state.edits[dk] || 0;
   setDraftOf(screen, emptyOf(screen));
   state.running = newRunning;
+  if (wkGo) state.wkd = null;
   closeTpad();
   render();
   queued(function () {
     return guarded(['entries', 'outbox', 'kv'], function (s, got, missed) {
       if (notReadable(['running', dk], missed)) return { refused: true, unreadable: true };
+      if (endV && notReadable([KEY_WK], missed)) return { refused: true, unreadable: true };
       if (state.gen.running !== gen0.running || !unchanged('running', got, missed)) return { refused: true, why: 'save-walk' };
       if (state.gen[dk] !== gen0.screen || !unchanged(dk, got, missed)) return { refused: true, why: 'save-screen' };
+      // The moves of the workout being ended: unchanged since this page last saw them (028).
+      if (endV && (state.gen[KEY_WK] !== wkGen0 || !unchanged(KEY_WK, got, missed))) return { refused: true, why: 'save-walk' };
       var wrote = {};
       if (entry) { s.entries.put(entry); s.outbox.put(out); }
       if (endV) { s.entries.put(endV); s.outbox.put(endOut); }
+      if (endV && !state.unread[KEY_WK] && got[KEY_WK] !== undefined) { s.kv.delete(KEY_WK); wrote[KEY_WK] = undefined; }
       // Anything that could not be read at opening is left as it is (015).
       if (!state.unread.running) {
         if (newRunning) s.kv.put(newRunning, 'running'); else s.kv.delete('running');
@@ -1241,6 +1331,7 @@ function save() {
       // Nothing was written: the screen gets back what was on it (unless taken from
       // another copy meanwhile), then takes what another copy changed (016).
       if (state.gen.running === gen0.running) state.running = runBefore;
+      if (wkGo && state.gen[KEY_WK] === wkGen0) state.wkd = wkBefore;
       if (state.gen[dk] === gen0.screen && !hasAnythingOf(screen, draftOf(screen))) setDraftOf(screen, saved);
       if (res.unreadable) {
         render();
@@ -1248,7 +1339,7 @@ function save() {
         specificShown = el('error').textContent;
         return;
       }
-      ['running', dk].forEach(function (k) {
+      ['running', dk, KEY_WK].forEach(function (k) {
         if (!state.unread[k] && !res.missed[k] && !sameAsKnown(k, res.got[k])) take(k, res.got[k]);
       });
       afterGuarded(res, res.why);
@@ -1277,6 +1368,7 @@ function save() {
     if (taken.length) showOtherLine('other');
   }, function () {
     state.running = runBefore;
+    if (wkGo) state.wkd = wkBefore;
     var nowDraft = draftOf(screen);
     if (!hasAnythingOf(screen, nowDraft)) setDraftOf(screen, saved);
     storeDraft(true);
@@ -1325,7 +1417,7 @@ function undo() {
       f1['Saved at'] = stamp;
       puts.push({ key: bar.id + ':2', id: bar.id, version: 2, state: 'undone', test: v1.test, fields: f1, seq: nextSeq() });
     }
-    var restored = null;
+    var restored = null, wkBack = null;
     if (bar.ended) {
       var b = bar.ended.before;
       var rf = clone(b.fields);
@@ -1335,7 +1427,13 @@ function undo() {
       restored = clone(b);
       restored.version = ver;
       restored.fields = rf;
+      // The workout runs again with its moves (028, G028-5).
+      if (Array.isArray(bar.ended.moves) && bar.ended.moves.length) wkBack = { id: b.id, moves: clone(bar.ended.moves), edit: null };
     }
+    // A workout started by this Save and undone: moves typed for it meanwhile go with it (028).
+    var wkDrop = !!(bar.started && state.wkd && state.wkd.id === bar.id);
+    var wkGen0 = state.gen[KEY_WK];
+    if ((wkBack || wkDrop) && state.unread[KEY_WK]) { state.saving = false; showError(WK_UNREAD); return Promise.reject('wk'); }
     var newBar = clone(bar);
     newBar.undone = true;
     return queued(function () {
@@ -1343,7 +1441,10 @@ function undo() {
         if (notReadable(touchesRun ? ['lastSaved', 'running'] : ['lastSaved'], missed)) return { refused: true, unreadable: true };
         if (state.gen.lastSaved !== gen0.lastSaved || fp('lastSaved', got.lastSaved) !== barFp) return { refused: true, why: 'bar' };
         if (touchesRun && (state.gen.running !== gen0.running || !unchanged('running', got, missed))) return { refused: true, why: 'walk' };
+        if ((wkBack || wkDrop) && (notReadable([KEY_WK], missed) || state.gen[KEY_WK] !== wkGen0 || !unchanged(KEY_WK, got, missed))) return { refused: true, why: 'walk' };
         var wrote = {};
+        if (wkBack) { s.kv.put(wkBack, KEY_WK); wrote[KEY_WK] = wkBack; }
+        else if (wkDrop) { s.kv.delete(KEY_WK); wrote[KEY_WK] = undefined; }
         puts.forEach(function (v) {
           s.entries.put(v);
           s.outbox.put({ key: v.key, seq: v.seq, status: 'waiting', payload: payloadFor(v) });
@@ -1360,6 +1461,8 @@ function undo() {
       if (state.unread.lastSaved) { delete state.unread.lastSaved; refreshUnread(); }   // 015-3
       if (restored) state.running = restored;
       else if (bar.started) state.running = null;
+      if (wkBack) state.wkd = normWk(wkBack);
+      else if (wkDrop) state.wkd = null;
       afterGuarded(res, 'other');
     });
   }).then(function () {
@@ -1386,8 +1489,9 @@ function undo() {
     tidyEnds();
     render();
     kick();
-  }, function () {
+  }, function (why) {
     state.saving = false;
+    if (why === 'wk') return;
     showError('Could not undo: this phone’s storage refused. Try Undo again.');
   });
 }
@@ -1532,7 +1636,7 @@ function fixSummary(f, running) {
   var w = '';
   if (g['Workout'] !== undefined) {
     var end = g['Workout ended'];
-    w = g['Workout'] + (end === undefined ? (running ? ' from ' + ampm(g['Time']) + ', still running' : '')
+    w = runName(g['Workout']) + (end === undefined ? (running ? ' from ' + ampm(g['Time']) + ', still running' : '')
                         : end === END_NOT_KNOWN ? ' from ' + ampm(g['Time']) + ', end not known'
                         : ' ' + ampm(g['Time']) + ' to ' + (isHM(end) ? ampm(end) : end));
     delete g['Workout']; delete g['Workout ended'];
@@ -1803,6 +1907,8 @@ function saveFix() {
       if (extra.next !== undefined || !extra.base || extra.base.state === 'undone') return { refused: true, why: 'fix-changed' };
       if (isRun && (!got.running || got.running.id !== fx.id || got.running.version !== fx.base)) return { refused: true, why: 'fix-changed' };
       var wrote = {};
+      // The moves recorded with this entry go with the new version, as its Moves column does (028, G028-7).
+      if (Array.isArray(extra.base.moves) && extra.base.moves.length) { entry.moves = extra.base.moves; addMoves(out.payload, entry.moves); }
       s.entries.put(entry);
       s.outbox.put(out);
       if (isRun) { s.kv.put(newRunning, 'running'); wrote.running = newRunning; }
@@ -1854,6 +1960,482 @@ function saveFix() {
     storeDraft(true);
     render();
     showError('Could not save the changes on this phone: its storage refused. They are back on the screen; try Save changes again.');
+  });
+}
+
+
+// ------------------------------------------------------------------ the Workout screen (028)
+// Open (on Intraday, while a workout that is not a walk runs) shows the Workout screen: its moves, + Add a move, and
+// End workout, which saves at once (R67). The moves are kept as they are typed in "draft-workout" (KEY_WK), compared
+// before writing as the half-filled screens are (016), so leaving the app loses nothing (G31).
+var WK_UNREAD = 'This phone could not read the moves of your workout, so they can’t be shown or changed just now. ' +
+                'Close the page and open it again; if this keeps happening, tell Claude.';
+var WK_UNREAD_END = 'This phone could not read the moves of your workout. Tap Save again to end it without them (what is stored stays as it is), ' +
+                    'or close the page and open it again first; if this keeps happening, tell Claude.';
+function wkHalfText(w) {
+  return 'Not saved: your workout has ' + pendingWords(w) + '. On Intraday tap Open, then ' + (w.edit && w.edit.i >= 0 ? 'Done' : 'Add this move') +
+         ' (or Cancel), then end the workout again.';
+}
+var WK_NOT_KEPT = 'This phone could not keep your moves just now. Keep the day log open and tap End workout when you finish; ' +
+                  'if this keeps happening, tell Claude.';
+function moveKind(k) { var m = MOVE_KINDS.filter(function (x) { return x.k === k; })[0]; return m || null; }
+function runName(kind) { return kind === MADE_UP ? 'Workout' : kind; }
+function movesCount(n) { return n + (n === 1 ? ' move' : ' moves'); }
+function wkOf(run) { return run && state.wkd && state.wkd.id === run.id ? state.wkd : null; }
+function wkRev() { return (state.wk && state.wk.rev || 0) + 1; }
+function emptyEdit(i, k) {
+  var e = { i: i, k: k || null, name: '', each: false };
+  MOVE_FIELDS.forEach(function (f) { e[f] = ''; });
+  return e;
+}
+function normMove(m) {
+  var o = { k: m.k, name: m.name };
+  MOVE_FIELDS.forEach(function (f) { if (typeof m[f] === 'string' && m[f] !== '') o[f] = m[f]; });
+  if (m.each === true) o.each = true;
+  return o;
+}
+function normEdit(e) {
+  var o = emptyEdit(e.i, moveKind(e.k) ? e.k : null);
+  if (typeof e.name === 'string') o.name = e.name;
+  MOVE_FIELDS.forEach(function (f) { if (typeof e[f] === 'string') o[f] = e[f]; });
+  o.each = e.each === true;
+  return o;
+}
+// A stored list of moves as the page uses it: moves and a half-typed move it cannot use are left out (028-3; Agent AE, W2).
+function normWk(v) {
+  var all = Array.isArray(v.moves) ? v.moves : [];
+  var ms = all.filter(moveOk).slice(0, MOVES_MAX);
+  var ed = v.edit && editOk(v.edit) ? normEdit(v.edit) : null;
+  // A change to a move, when a move was left out: its place may no longer be that move's, so it is not kept (028-4; Agent AE, R4).
+  if (ed && ed.i >= 0 && (ms.length !== all.length || ed.i >= ms.length)) ed = null;
+  return { id: v.id, moves: ms.map(normMove), edit: ed };
+}
+// One move as it reads, by its parts: "3 × 20", "12 lb", "each side"; "15 min", "level 6", "speed 22".
+function moveParts(m) {
+  var p = [];
+  if (m.k === 'w') {
+    var sec = m.sec;
+    if (m.sets && m.reps) p.push(m.sets + ' × ' + m.reps);
+    else if (m.sets && sec) { p.push(m.sets + ' × ' + sec + ' sec held'); sec = ''; }
+    else if (m.sets) p.push(m.sets + (m.sets === '1' ? ' set' : ' sets'));
+    else if (m.reps) p.push(m.reps + (m.reps === '1' ? ' rep' : ' reps'));
+    if (sec) p.push(sec + ' sec held');
+    if (m.lb) p.push(m.lb + ' lb');
+    if (m.each) p.push('each side');
+  } else if (m.k === 'b') {
+    if (m.min) p.push(m.min + ' min');
+    if (m.level) p.push('level ' + m.level);
+    if (m.speed) p.push('speed ' + m.speed);
+  }
+  return p;
+}
+// In the sheet and today's list: "Clamshells, 3 × 20, each side", one move per line (G35, G028-8).
+function moveText(m) { var p = moveParts(m); return m.name + (p.length ? ', ' + p.join(', ') : ''); }
+function movesText(ms) { return ms.map(moveText).join('\n'); }
+// For the copy for the app: the kind's name and each number by name (G028-8).
+function moveData(m) {
+  var o = { kind: (moveKind(m.k) || { name: '' }).name, name: m.name };
+  var names = { sets: 'sets', reps: 'reps', lb: 'pounds', sec: 'seconds', min: 'minutes', level: 'level', speed: 'speed' };
+  MOVE_FIELDS.forEach(function (f) { if (typeof m[f] === 'string' && m[f] !== '') o[names[f]] = m[f]; });
+  if (m.each === true) o.eachSide = true;
+  return o;
+}
+// The moves as data in the copy for the app, unless that would make the copy longer than the sheet takes (45,000
+// characters; program 001-5): then the Moves column alone carries them, so the entry is never turned away for it.
+function addMoves(pl, moves) {
+  if (!Array.isArray(moves) || !moves.length) return;
+  pl.app.moves = moves.map(moveData);
+  if (JSON.stringify(pl.app).length > 40000) delete pl.app.moves;
+}
+// What is in the move box that the list does not hold yet: a new move with anything typed, or a move opened and changed (028-4).
+function editPending(w) {
+  var e = w && w.edit;
+  if (!e) return false;
+  if (e.i < 0) return editHas(e);
+  var m = w.moves[e.i];
+  if (!m) return editHas(e);
+  if (e.k !== m.k || cleanTyped(e.name) !== m.name || (e.each === true) !== (m.each === true)) return true;
+  return MOVE_FIELDS.some(function (f) { var a = String(e[f] || '').trim(), b = m[f] || ''; return a !== b && !(a !== '' && b !== '' && sameAmount(a, b)); });
+}
+function pendingWords(w) {
+  return w.edit && w.edit.i >= 0 ? 'a change to ' + (w.moves[w.edit.i] ? w.moves[w.edit.i].name : 'a move') + ' that is not kept yet' : 'a move that is not in its list yet';
+}
+function editHas(e) {
+  return !!e && (!!cleanTyped(e.name) || e.each === true || MOVE_FIELDS.some(function (f) { return typeof e[f] === 'string' && e[f].trim() !== ''; }));
+}
+// The entry being changed is a workout with moves: recorded with them, or running with moves kept (028-3).
+function fixHasMoves() {
+  var fx = state.fix;
+  if (!fx) return false;
+  if (typeof fx.orig['Moves'] === 'string' && /\S/.test(fx.orig['Moves'])) return true;
+  var r = state.running;
+  return !!(r && r.id === fx.id && wkOf(r) && (wkOf(r).moves.length || editPending(wkOf(r))));     // a half-typed one too (028-4)
+}
+function wkCanEdit() {
+  var r = state.running;
+  return !!(r && r.kind !== 'Walk' && !state.unread.running && !state.unread[KEY_WK] && state.loaded && !state.reading);
+}
+function wkTouch() { state.edits[KEY_WK] = (state.edits[KEY_WK] || 0) + 1; }
+function wkEnsure() {
+  var r = state.running;
+  if (!state.wkd || state.wkd.id !== r.id) state.wkd = { id: r.id, moves: [], edit: null };
+  return state.wkd;
+}
+function wkRedraw(note, bad) {
+  if (!state.wk) return;
+  state.wk.rev = wkRev();
+  state.wk.note = note || '';
+  state.wk.bad = !!bad;
+  render();
+}
+// A note on the Workout screen without drawing it again, so typing in a box goes on (028-4; Agent AE, R1).
+function wkNoteQuiet(text) {
+  if (!state.wk) return;
+  state.wk.note = text; state.wk.bad = true;
+  var n = el('wknote');
+  if (!n) {
+    var run = document.querySelector('#sc-Workout .wkrun');
+    if (!run) return;
+    n = document.createElement('div'); n.id = 'wknote';
+    run.parentNode.insertBefore(n, run.nextSibling);
+  }
+  n.className = 'munote bad';
+  n.textContent = text;
+}
+function openWorkout() {
+  var r = state.running;
+  if (!r || r.kind === 'Walk' || fixOn('Intraday') || !state.loaded) return;
+  if (state.unread[KEY_WK]) { showError(WK_UNREAD); return; }
+  armedId = null;
+  storeDraft(true);
+  closePad();
+  closeTpad();
+  el('nothing').hidden = true;
+  state.wk = { rev: wkRev(), note: '', bad: false, names: null, day: dateStr(new Date()) };
+  render();
+  window.scrollTo(0, 0);
+  shieldTaps(TAP_SHIELD_MS);
+  wkLoadNames();
+}
+function closeWorkout() {
+  state.wk = null;
+  storeDraft(true);
+  render();
+  window.scrollTo(0, 0);
+  shieldTaps(TAP_SHIELD_MS);
+}
+// Names used before (D205, G028-4): of moves saved on this phone, the newest first, and of this workout.
+function wkLoadNames() {
+  newestEntries().then(function (newest) {
+    if (!state.wk) return;
+    var seen = [];
+    Object.keys(newest).map(function (id) { return newest[id]; })
+      .filter(function (v) { return v && v.state !== 'undone' && !!v.test === !!state.test && Array.isArray(v.moves); })
+      .sort(function (a, b) { return (b.seq || 0) - (a.seq || 0); })
+      .forEach(function (v) { v.moves.slice().reverse().forEach(function (m) { if (moveOk(m)) seen.push({ k: m.k, name: m.name }); }); });
+    state.wk.names = seen;
+    wkRedraw(state.wk.note, state.wk.bad);
+  }, function () { /* no names offered */ });
+}
+function wkNamesFor(k) {
+  var out = [], keys = {};
+  var w = state.wkd && state.running && state.wkd.id === state.running.id ? state.wkd.moves.slice().reverse() : [];
+  w.concat((state.wk && state.wk.names) || []).forEach(function (m) {
+    var key = nameKey(m.name);
+    if (m.k !== k || !key || keys[key] || out.length >= NAMES_SHOWN) return;
+    keys[key] = true;
+    out.push(cleanTyped(m.name));
+  });
+  return out;
+}
+var wkDrawn = 0;
+function renderWorkout() {
+  var open = !!state.wk;
+  document.body.classList.toggle('wkopen', open);
+  var sc = el('sc-Workout');
+  sc.hidden = !open;
+  if (!open) { if (wkDrawn) { sc.textContent = ''; wkDrawn = 0; } return; }
+  if (state.wk.rev === wkDrawn) return;
+  wkDrawn = state.wk.rev;
+  sc.textContent = '';
+  var add = function (parent, tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    parent.appendChild(e);
+    return e;
+  };
+  var r = state.running, w = wkOf(r), moves = w ? w.moves : [], ed = w ? w.edit : null;
+  var bar = add(sc, 'div', 'mubar');
+  var back = add(bar, 'button', 'muback', '‹ Intraday');
+  back.type = 'button'; back.id = 'wkback';
+  add(bar, 'span', 'muttl', 'Workout · ' + r.kind).id = 'wkttl';
+  var run = add(sc, 'div', 'wkrun');
+  add(run, 'b', '', 'Running since ' + whenOf(r.startDate, r.startTime, dateStr(new Date())));
+  add(run, 'span', '', 'Add each move as you do it, or all at the end.');
+  if (state.wk.note) { var n = add(sc, 'div', 'munote' + (state.wk.bad ? ' bad' : ''), state.wk.note); n.id = 'wknote'; }
+  add(sc, 'h3', '', 'Moves');
+  var box = add(sc, 'div', 'wkmoves');
+  box.id = 'wkmoves';
+  if (!moves.length) add(box, 'div', 'wknone', 'No moves yet.');
+  moves.forEach(function (m, i) {
+    var b = add(box, 'button', 'wkmove' + (ed && ed.i === i ? ' on' : ''));
+    b.type = 'button'; b.setAttribute('data-i', String(i));
+    add(b, 'div', 'mn', m.name);
+    var p = moveParts(m);
+    if (p.length) add(b, 'div', 'md', p.join(' · '));
+  });
+  if (ed) drawWkEdit(sc, add, ed, moves);
+  else if (moves.length < MOVES_MAX) {
+    var am = add(sc, 'button', 'muadd', '+ Add a move');
+    am.type = 'button'; am.id = 'wkadd'; am.style.marginTop = '10px';
+  } else add(sc, 'div', 'hint', 'A workout can hold up to ' + MOVES_MAX + ' moves.');
+  var end = add(sc, 'button', 'wkend', 'End workout');
+  end.type = 'button'; end.id = 'wkendbtn';
+  add(sc, 'div', 'hint', 'End workout saves it at once, with its moves, and you can Undo it on Intraday.').style.margin = '8px 12px 0';
+}
+function drawWkEdit(sc, add, ed, moves) {
+  var bx = add(sc, 'div', 'wkedit');
+  bx.id = 'wkedit';
+  add(bx, 'div', 't', ed.i >= 0 && moves[ed.i] ? moves[ed.i].name : 'New move');
+  var kr = add(bx, 'div', 'wkkind');
+  MOVE_KINDS.forEach(function (mk) {
+    var c = add(kr, 'button', 'choice' + (ed.k === mk.k ? ' on' : ''), mk.name);
+    c.type = 'button'; c.setAttribute('data-k', mk.k); c.setAttribute('aria-pressed', ed.k === mk.k ? 'true' : 'false');
+  });
+  var mk0 = moveKind(ed.k);
+  if (!mk0) {
+    add(bx, 'div', 'hint', 'Pick the kind of move first.').style.margin = '0 0 6px';
+  } else {
+    add(bx, 'label', 'wklbl', 'Move').setAttribute('for', 'wkname');
+    var nm = add(bx, 'input', 'wkname');
+    nm.id = 'wkname'; nm.type = 'text'; nm.autocomplete = 'off'; nm.maxLength = MOVE_NAME_MAX;
+    nm.placeholder = mk0.k === 'w' ? 'Name, like Squats' : (mk0.k === 's' ? 'Name, like Hip stretch' : 'Name, like Rower');     // made-up examples
+    nm.value = ed.name;
+    var names = wkNamesFor(mk0.k);
+    if (names.length) {
+      var ch = add(bx, 'div', 'wkchips');
+      ch.id = 'wkchips';
+      add(ch, 'span', 'l', 'Used before (tap one instead of typing):');
+      names.forEach(function (x) { var c = add(ch, 'button', 'wkchip', x); c.type = 'button'; c.setAttribute('data-name', x); });
+    }
+    if (mk0.boxes.length) {
+      var g = add(bx, 'div', 'wkgrid');
+      mk0.boxes.forEach(function (bxi) {
+        var cell = add(g, 'div', '');
+        add(cell, 'label', 'wklbl', bxi[1]).setAttribute('for', 'wkf-' + bxi[0]);
+        var inp = add(cell, 'input', '');
+        inp.id = 'wkf-' + bxi[0]; inp.type = 'text'; inp.inputMode = 'decimal'; inp.autocomplete = 'off'; inp.maxLength = MOVE_NUM_MAX;
+        inp.setAttribute('data-f', bxi[0]); inp.placeholder = '–';
+        inp.value = ed[bxi[0]] || '';
+      });
+    }
+    if (mk0.each) {
+      var ea = add(bx, 'button', 'wkeach' + (ed.each ? ' on' : ''));
+      ea.type = 'button'; ea.id = 'wkeach'; ea.setAttribute('aria-pressed', ed.each ? 'true' : 'false');
+      add(ea, 'i', '');
+      ea.appendChild(document.createTextNode('Each side'));
+    }
+  }
+  var two = add(bx, 'div', 'wktwo');
+  if (ed.i >= 0) { var out = add(two, 'button', 'wkout', 'Take this move out'); out.type = 'button'; out.id = 'wkoutbtn'; }
+  else { var cn = add(two, 'button', 'btn quiet', 'Cancel'); cn.type = 'button'; cn.id = 'wkcancel'; }
+  var ok = add(two, 'button', 'btn', ed.i >= 0 ? 'Done' : 'Add this move');
+  ok.type = 'button'; ok.id = 'wkok';
+  if (ed.i >= 0) { var cn2 = add(bx, 'button', 'btn quiet', 'Cancel'); cn2.type = 'button'; cn2.id = 'wkcancel'; cn2.style.marginTop = '8px'; }
+}
+// Checks a move and puts it in the list (new) or in its place (changed): a kind, a name, numbers where typed (G028-3).
+function wkCommit() {
+  if (!wkCanEdit()) { wkRedraw(state.unread[KEY_WK] ? WK_UNREAD : '', true); return; }
+  var w = wkOf(state.running), ed = w && w.edit;
+  if (!ed) return;
+  var mk = moveKind(ed.k);
+  if (!mk) { wkRedraw('Pick the kind of move first.', true); return; }
+  var name = cleanTyped(ed.name).slice(0, MOVE_NAME_MAX);
+  if (!name) { wkRedraw('Give the move a name.', true); focusLater('#wkname'); return; }
+  var m = { k: mk.k, name: name };
+  for (var j = 0; j < mk.boxes.length; j++) {
+    var f = mk.boxes[j][0], v = String(ed[f] || '').trim();
+    if (/^\d+\.$/.test(v)) v = v.slice(0, -1);               // "12." is 12 (028-3; Agent AE, N8c)
+    if (v === '') continue;
+    if (!AMOUNT_RE.test(v) || v.length > MOVE_NUM_MAX) { wkRedraw(mk.boxes[j][1] + ': type a number, like 3 or 12.5, or leave it empty.', true); focusLater('#wkf-' + f); return; }
+    m[f] = amountNorm(v);
+  }
+  if (mk.each && ed.each) m.each = true;
+  if (ed.i >= 0 && ed.i < w.moves.length) w.moves[ed.i] = m;
+  else if (w.moves.length < MOVES_MAX) w.moves.push(m);
+  else { wkRedraw('A workout can hold up to ' + MOVES_MAX + ' moves.', true); return; }
+  w.edit = null;
+  wkTouch();
+  storeDraft(true);
+  wkRedraw('', false);
+}
+function focusLater(sel) { setTimeout(function () { var f = document.querySelector(sel); if (f) { try { f.focus(); } catch (x) { /* ignore */ } } }, 0); }
+function wireWorkout() {
+  var sc = el('sc-Workout');
+  sc.addEventListener('click', function (e) {
+    var t = e.target && e.target.closest ? e.target.closest('button') : null;
+    if (!t || !state.wk) return;
+    if (t.id === 'wkback') { closeWorkout(); return; }
+    if (t.id === 'wkendbtn') { endWorkout(); return; }
+    if (!wkCanEdit()) { wkRedraw(state.unread[KEY_WK] ? WK_UNREAD : '', true); return; }
+    var w = wkEnsure();
+    if (t.id === 'wkadd') { w.edit = emptyEdit(-1, null); wkTouch(); storeDraft(true); wkRedraw('', false); return; }
+    if (t.classList.contains('wkmove')) {
+      if (w.edit && editPending(w) && w.edit.i !== Number(t.getAttribute('data-i'))) { wkRedraw('Finish the move you are on first: tap ' + (w.edit.i >= 0 ? 'Done' : 'Add this move') + ', or Cancel.', true); return; }
+      var i = Number(t.getAttribute('data-i')), m = w.moves[i];
+      if (!m) return;
+      var ed = emptyEdit(i, m.k);
+      ed.name = m.name;
+      MOVE_FIELDS.forEach(function (f) { if (typeof m[f] === 'string') ed[f] = m[f]; });
+      ed.each = m.each === true;
+      w.edit = ed; wkTouch(); storeDraft(true); wkRedraw('', false);
+      return;
+    }
+    if (!w.edit) return;
+    if (t.closest('.wkkind') && t.getAttribute('data-k')) {
+      var k = t.getAttribute('data-k');
+      if (w.edit.k !== k) {
+        w.edit.k = k;
+        var mk = moveKind(k);
+        MOVE_FIELDS.forEach(function (f) { if (!mk.boxes.some(function (b) { return b[0] === f; })) w.edit[f] = ''; });
+        if (!mk.each) w.edit.each = false;
+        wkTouch(); storeDraft(true); wkRedraw('', false);
+        focusLater('#wkname');
+      }
+      return;
+    }
+    if (t.classList.contains('wkchip')) { w.edit.name = t.getAttribute('data-name'); wkTouch(); storeDraft(true); wkRedraw('', false); return; }
+    if (t.id === 'wkeach') { w.edit.each = !w.edit.each; wkTouch(); storeDraft(true); wkRedraw('', false); return; }
+    if (t.id === 'wkcancel') { w.edit = null; wkTouch(); storeDraft(true); wkRedraw('', false); return; }
+    if (t.id === 'wkoutbtn') {
+      if (w.edit.i >= 0 && w.edit.i < w.moves.length) w.moves.splice(w.edit.i, 1);
+      w.edit = null; wkTouch(); storeDraft(true); wkRedraw('', false);
+      return;
+    }
+    if (t.id === 'wkok') { wkCommit(); return; }
+  });
+  sc.addEventListener('input', function (e) {
+    var t = e.target;
+    if (!t || !state.wk || !wkCanEdit()) return;
+    var w = wkOf(state.running);
+    if (!w || !w.edit) return;
+    if (t.id === 'wkname') w.edit.name = t.value.slice(0, MOVE_NAME_MAX);                                   // cut to the box's length (028-3)
+    else if (t.getAttribute('data-f')) w.edit[t.getAttribute('data-f')] = t.value.slice(0, MOVE_NUM_MAX);
+    else return;
+    wkTouch();
+    storeDraft(false);
+  });
+}
+// End workout on the Workout screen: saved at once, at this moment, with its moves (R67, G028-1); Undo on Intraday.
+function endWorkout() {
+  if (state.reading || !state.loaded || state.saving) return;
+  var run = state.running;
+  if (!run || run.kind === 'Walk') { closeWorkout(); return; }
+  if (state.unread.running || state.unread[KEY_WK]) { wkRedraw(WK_UNREAD, true); return; }
+  if (state.fix && state.fix.id === run.id) {
+    wkRedraw('You are changing this workout on Intraday. Tap Save changes or Cancel there first, then end it here.', true);
+    return;
+  }
+  var w = wkOf(run);
+  if (w && editPending(w)) {
+    wkRedraw(w.edit.i >= 0 ? 'Your change to ' + (w.moves[w.edit.i] ? w.moves[w.edit.i].name : 'this move') + ' is not kept yet: tap Done, or Cancel, then End workout.'
+                           : 'The move you are on is not in the list yet: tap Add this move, or Cancel, then End workout.', true);
+    return;
+  }
+  var now = new Date();
+  // Begun on a day that is now over: asked once more, since its end is the moment of the tap (028-3; Agent AE, N6).
+  if (isStale() && state.wk && state.wk.staleOk !== run.id) {
+    state.wk.staleOk = run.id;
+    wkRedraw('This workout started ' + whenOf(run.startDate, run.startTime, dateStr(now)) + '. Tap End workout again to end it now, at ' +
+             ampm(timeStr(now)) + ', or go back to Intraday and set when it ended in the box at the top.', true);
+    return;
+  }
+  if (Math.floor(now.getTime() / 60000) * 60000 < Math.floor(run.startAt / 60000) * 60000) {
+    wkRedraw('The phone’s clock now reads earlier than the start of this workout (' + ampm(run.startTime) + '), so it can’t be ended here. ' +
+             'End it on Intraday with the time at the top, or check the phone’s clock.', true);
+    return;
+  }
+  var moves = w ? clone(w.moves) : [];
+  var ef = clone(run.fields);
+  ef['Workout ended'] = timeStr(now);
+  if (moves.length) ef['Moves'] = movesText(moves);
+  ef['Saved at'] = stampOf(now);
+  var endV = { key: run.id + ':' + (run.version + 1), id: run.id, version: run.version + 1, state: 'current', test: run.test, fields: ef, seq: nextSeq() };
+  if (moves.length) endV.moves = moves;
+  var endOut = { key: endV.key, seq: endV.seq, status: 'waiting', payload: payloadFor(endV) };
+  var bar = { id: null, date: dateStr(now), time: timeStr(now), undone: false, test: run.test, screen: 'Intraday',
+              summary: runName(run.kind) + ' ended (' + whenOf(run.startDate, run.startTime, dateStr(now)) + ' to ' + ampm(timeStr(now)) + ')' +
+                       (moves.length ? ', ' + movesCount(moves.length) : ', no moves'),
+              savedDate: dateStr(now), savedTime: timeStr(now), until: nextDayStart(now).getTime(), started: false,
+              ended: { id: run.id, version: endV.version, before: run } };
+  if (moves.length) bar.ended.moves = moves;
+  if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
+  var gen0 = { running: state.gen.running, wk: state.gen[KEY_WK] };
+  var ed0 = state.edits[KEY_WK] || 0;
+  var runBefore = run, wkBefore = state.wkd, wkOpen = state.wk;
+  state.saving = true;
+  state.running = null;
+  if (w) state.wkd = null;
+  state.wk = null;
+  render();
+  window.scrollTo(0, 0);
+  shieldTaps(TAP_SHIELD_MS);
+  queued(function () {
+    return guarded(['entries', 'outbox', 'kv'], function (s, got, missed) {
+      if (notReadable(['running', KEY_WK], missed)) return { refused: true, unreadable: true };
+      if (state.gen.running !== gen0.running || !unchanged('running', got, missed)) return { refused: true, why: 'save-walk' };
+      if (state.gen[KEY_WK] !== gen0.wk || !unchanged(KEY_WK, got, missed)) return { refused: true, why: 'save-walk' };
+      var wrote = {};
+      s.entries.put(endV);
+      s.outbox.put(endOut);
+      s.kv.delete('running');
+      wrote.running = undefined;
+      if (got[KEY_WK] !== undefined) { s.kv.delete(KEY_WK); wrote[KEY_WK] = undefined; }
+      s.kv.put(bar, 'lastSaved');
+      wrote.lastSaved = bar;
+      return { wrote: wrote };
+    });
+  }).then(function (res) {
+    state.saving = false;
+    if (res.refused) {
+      if (state.gen.running === gen0.running) state.running = runBefore;
+      if (state.gen[KEY_WK] === gen0.wk) state.wkd = wkBefore;
+      if (res.unreadable) { render(); showError(NOT_READ_SAVE); specificShown = el('error').textContent; return; }
+      ['running', KEY_WK].forEach(function (k) {
+        if (!state.unread[k] && !res.missed[k] && !sameAsKnown(k, res.got[k])) take(k, res.got[k]);
+      });
+      afterGuarded(res, res.why);
+      storeDraft(true);
+      return;
+    }
+    state.lastSaved = bar;
+    armedId = null;
+    listDay = null;
+    listEditDay = null;
+    state.flash = { id: run.id, until: Date.now() + 4000 };
+    setTimeout(refreshList, 4100);
+    state.storedEdits[KEY_WK] = ed0;
+    delete state.unread.lastSaved;
+    el('error').hidden = true;
+    showUnread(false);
+    el('nothing').hidden = true;
+    var taken = afterGuarded(res, 'none');
+    tidyEnds();
+    storeDraft(true);
+    render();
+    kick();
+    window.scrollTo(0, 0);
+    if (taken.length) showOtherLine('other');
+  }, function () {
+    state.saving = false;
+    state.running = runBefore;
+    state.wkd = wkBefore;
+    state.wk = wkOpen;
+    if (state.wk) state.wk.rev = wkRev();
+    storeDraft(true);
+    render();
+    showError('Could not end the workout on this phone: its storage refused. Nothing was lost; try End workout again.');
   });
 }
 
@@ -3013,6 +3595,7 @@ function listParts(f) {
       details.push(end === undefined ? listTime(f['Time']) + ', not ended yet'
                    : end === END_NOT_KNOWN ? listTime(f['Time']) + ' to an end time not known'
                    : listTime(f['Time']) + ' to ' + listTime(end));
+      if (typeof f['Moves'] === 'string') f['Moves'].split('\n').forEach(function (m) { if (/\S/.test(m)) details.push(m); });     // 028
     }
     var liq = LIQUIDS.filter(function (l) { return f[l.column] === 'Yes'; }).map(function (l) { return l.name; });
     if (liq.length) title.push('Liquids · ' + (liq.length === 1 ? liq[0] : liq.slice(0, -1).join(', ') + ' and ' + liq[liq.length - 1]));
@@ -3275,6 +3858,7 @@ function renderHeads() {
 function render() {
   tidyEnds();
   renderUsuals();
+  renderWorkout();                  // 028
   var screen = state.screen;
   document.body.classList.toggle('test', !!state.test);
   el('testbar').hidden = !state.test;
@@ -3418,40 +4002,52 @@ function renderIntraday() {
   tw.classList.toggle('end', !!runShown);
   tw.setAttribute('aria-pressed', won ? 'true' : 'false');
   el('p-Workout').hidden = !(dr.workout && !runShown);
+  // A kind kept from an earlier page (G028-6), or recorded in the entry being changed, is offered as its own choice.
+  var xk = dr.workout && dr.workout.kind && WORKOUT_KINDS.indexOf(dr.workout.kind) < 0 ? dr.workout.kind : null;
+  var xb = el('wk-extra');
+  xb.hidden = !xk;
+  if (xk) { xb.setAttribute('data-name', xk); xb.querySelector('.cn').textContent = xk; }
   Array.prototype.forEach.call(document.querySelectorAll('#p-Workout .choice'), function (c) {
     var on = !!dr.workout && dr.workout.kind === c.getAttribute('data-name');
     c.classList.toggle('on', on);
     c.setAttribute('aria-pressed', on ? 'true' : 'false');
   });
   var rl = el('running');
+  var rt = rl;                      // the line's words (028: Open sits beside it, in #runbox)
+  // Open: the Workout screen, while a workout that is not a walk runs (028); not while an entry is being changed.
+  el('wkopen').hidden = !(state.running && state.running.kind !== 'Walk' && !fixOn('Intraday') && !state.unread.running);
   var fe = el('fixend'), feOn = false;
   if (fixOn('Intraday')) {
     var o = state.fix.orig, w = o['Workout'] === 'Walk' ? 'walk' : 'workout';
     rl.hidden = o['Workout'] === undefined;
-    if (o['Workout'] === undefined) rl.textContent = '';
+    if (o['Workout'] === undefined) rt.textContent = '';
     else if (state.running && state.running.id === state.fix.id) {
-      rl.textContent = 'This ' + w + ' is still running. Its start is the time at the top. End it after you save or cancel.';
+      rt.textContent = 'This ' + w + ' is still running. Its start is the time at the top. End it after you save or cancel.';
     } else if (o['Workout ended'] !== undefined) {
       // Its end can be changed here (021, R95).
-      rl.textContent = 'This ' + w + ' started at the time at the top. Tap its end time below to change it.';
+      rt.textContent = 'This ' + w + ' started at the time at the top. Tap its end time below to change it.';
       feOn = true;
       renderFixEnd(state.fix, w);
     } else {
-      rl.textContent = 'Its start is the time at the top.';
+      rt.textContent = 'Its start is the time at the top.';
     }
   } else if (state.running && (!stale || dr.endTick)) {
     var r = state.running;
     rl.hidden = false;
-    rl.textContent = dr.endTick
-      ? (r.kind === 'Walk' ? 'The walk' : 'The workout') + ' ends at the time at the top when you tap Save.'
-      : r.kind + ' started ' + whenOf(r.startDate, r.startTime, dateStr(new Date())) + '. Tap ' + endLabel() + ' when you finish.';
+    var mn = wkOf(r) ? wkOf(r).moves.length : 0;
+    rt.textContent = dr.endTick
+      ? (r.kind === 'Walk' ? 'The walk' : 'The workout') + ' ends at the time at the top when you tap Save' + (mn ? ', with its ' + movesCount(mn) : '') + '.'
+      : r.kind === 'Walk' ? 'Walk started ' + whenOf(r.startDate, r.startTime, dateStr(new Date())) + '. Tap End walk when you finish.'
+      : runName(r.kind) + ' started ' + whenOf(r.startDate, r.startTime, dateStr(new Date())) + (mn ? ', ' + movesCount(mn) + ' so far' : '') +
+        '. Tap Open to add your moves; End workout when you finish.';
   } else if (state.running) {
     rl.hidden = false;
-    rl.textContent = 'Still running from an earlier day. Set when the ' + (state.running.kind === 'Walk' ? 'walk' : 'workout') +
+    rt.textContent = 'Still running from an earlier day. Set when the ' + (state.running.kind === 'Walk' ? 'walk' : 'workout') +
                      ' ended in the box above.';
   } else {
     rl.hidden = true;
   }
+  el('runbox').hidden = rl.hidden;
   fe.hidden = !feOn;
   // Liquids and Food (increment 009)
   var lq = dr.liquids;
@@ -3535,7 +4131,7 @@ function renderEndBox() {
   box.hidden = !on;
   if (!on) return;
   var r = state.running, dr = cur();
-  var what = r.kind === 'Walk' ? 'Your walk' : 'Your workout (' + r.kind + ')';
+  var what = r.kind === 'Walk' ? 'Your walk' : (r.kind === MADE_UP ? 'Your workout' : 'Your workout (' + r.kind + ')');
   el('endqtext').textContent = what + ' from ' + whenOf(r.startDate, r.startTime, dateStr(new Date())) + ' is still running. When did it end?';
   var a = endAnswered(dr) ? dr.endAns : null;
   setTimeButton(el('endset'), a && a.time ? a.time : null);
@@ -3642,24 +4238,29 @@ function buildButtons() {
       storeDraft(false);
     });
   });
-  WORKOUT_KINDS.forEach(function (k) {
+  WORKOUT_KINDS.concat([null]).forEach(function (k) {
     var b = document.createElement('button');
     b.type = 'button';
     b.className = 'choice';
-    b.setAttribute('data-name', k);
-    var t = document.createElement('span'); t.className = 'cn'; t.textContent = k; b.appendChild(t);
+    if (k) b.setAttribute('data-name', k); else { b.id = 'wk-extra'; b.hidden = true; }     // the extra one (G028-6)
+    var t = document.createElement('span'); t.className = 'cn'; t.textContent = k ? WORKOUT_WORDS[k][0] : ''; b.appendChild(t);
+    if (k) { var s = document.createElement('span'); s.className = 'cc'; s.textContent = WORKOUT_WORDS[k][1]; b.appendChild(s); }
     var c = document.createElement('span'); c.className = 'chk'; c.textContent = '✓'; b.appendChild(c);
     b.addEventListener('click', function () {
       if (fixOn('Intraday') && !idr().workout) return;
+      var kind = b.getAttribute('data-name');
+      if (!kind) return;
+      if (kind === 'Walk' && fixOn('Intraday') && fixHasMoves()) { showNote('This workout has moves, so it can’t be changed to a walk.'); return; }     // 028-3 (Agent AE, N5)
       touch();
       if (!idr().workout) idr().workout = { kind: null };
-      idr().workout.kind = k;
+      idr().workout.kind = kind;
       el('nothing').hidden = true;
       storeDraft(true);
       render();
     });
     el('c-Workout').appendChild(b);
   });
+  el('wkopen').addEventListener('click', openWorkout);      // 028
   el('t-Workout').addEventListener('click', function () {
     if (fixOn('Intraday')) {        // a walk or workout can't be added or taken off a saved entry (019, G019-4)
       showNote(idr().workout ? 'A walk or workout can’t be taken off a saved entry. You can change its kind.'
@@ -4230,6 +4831,7 @@ function wire() {
   });
   el('error').addEventListener('click', function () { el('error').hidden = true; });
   wireUsuals();      // 025
+  wireWorkout();     // 028
 
   window.addEventListener('online', kick);
   // A link opened while the page is already open in this tab (W3 of the checks).
@@ -4255,7 +4857,7 @@ function wire() {
   ['click', 'input', 'change'].forEach(function (type) {
     document.addEventListener(type, function (e) {
       var t = e.target;
-      if (!t || !t.closest || !t.closest('main') || t.closest('#savedbar, #error, #status, #save, #nothing, #else, #cancelfix, #fixbanner, #sc-Usuals, .mubtn')) return;
+      if (!t || !t.closest || !t.closest('main') || t.closest('#savedbar, #error, #status, #save, #nothing, #else, #cancelfix, #fixbanner, #sc-Usuals, .mubtn, #sc-Workout, #wkopen')) return;
       var k = screenKey(state.screen);
       state.edits[k] = (state.edits[k] || 0) + 1;
     }, true);
@@ -4284,6 +4886,7 @@ function wire() {
     if (b && barGone(b) && !el('savedbar').hidden) render();
     var d = currentLogDay();
     if (d !== lastDay) { lastDay = d; armedId = null; refreshDone(); render(); }     // the Change button goes at 5:00 AM (022-3)
+    if (state.wk && state.wk.day !== dateStr(new Date())) { state.wk.day = dateStr(new Date()); state.wk.rev = wkRev(); render(); }     // 028-3
   }, 10000);
   // Anything waiting is tried again every minute while the page is open.
   setInterval(function () { if (state.anyWaiting) kick(); }, 60000);
@@ -4331,7 +4934,7 @@ function limitNote(id, max, name) {
 var KEPT = [['draft', 'the half-filled Intraday screen'], ['lastSaved', 'the green bar of your last Save'],
             ['link', 'the link to your sheet'], ['running', 'whether a walk or workout is running'],
             ['draft-Morning', 'the half-filled Morning screen'], ['draft-Evening', 'the half-filled Evening screen'],
-            [KEY_FIX, 'a change you were making to an entry']];
+            [KEY_FIX, 'a change you were making to an entry'], [KEY_WK, 'the moves of your workout']];
 function readKept(key) {
   var once = function () { return DL.get('kv', key).then(function (v) { return { ok: true, value: v }; }); };
   return once().catch(function () { return once(); }).catch(function () { return { ok: false }; });

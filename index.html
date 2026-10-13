@@ -31,6 +31,8 @@
   <div id="error" class="error" hidden></div>
   <!-- My usual ones (increment 025): shakes and medicine sets, changed, added or no longer used (D170 to D175) -->
   <section id="sc-Usuals" class="usuals" hidden></section>
+  <!-- The Workout screen (increment 028): the moves of a workout made up as he goes (D199 to D206) -->
+  <section id="sc-Workout" class="usuals" hidden></section>
 
   <div id="savedbar" class="savedbar" hidden>
     <p><b id="savedtitle"></b><br><span id="savedwhat"></span></p>
@@ -86,7 +88,7 @@
       <button type="button" class="tile" id="t-Food"><span class="chk">&#10003;</span>Food</button>
       <button type="button" class="tile" id="t-Other"><span class="chk">&#10003;</span>Other</button>
     </div>
-    <div id="running" class="runline" hidden></div>
+    <div id="runbox" class="runline" hidden><div id="running" hidden></div><button type="button" id="wkopen" class="btn" hidden>Open</button></div>
     <!-- The end of an ended walk or workout being changed (increment 021, R95) -->
     <div id="fixend" class="fixend" hidden>
       <div class="tbox inq">
@@ -96,7 +98,7 @@
       <div id="fixendnote" class="endqnote"></div>
     </div>
     <div id="p-Workout" class="panel" hidden>
-      <div class="t">Workout: what kind?</div>
+      <div class="t">Workout</div>
       <div id="c-Workout"></div>
     </div>
     <div id="p-Shake" class="panel" hidden>

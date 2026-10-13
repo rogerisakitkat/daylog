@@ -236,3 +236,39 @@ body.usualsopen main > :not(#sc-Usuals):not(#status):not(#error) { display: none
 .cxl b { font-weight: 600; }
 .cxhint { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
 .nothing { overflow-wrap: anywhere; }
+
+/* The Workout screen (028; increment 028's drawings 1 to 6) */
+body.wkopen #heads, body.wkopen #fixbanner { display: none !important; }
+body.wkopen main > :not(#sc-Workout):not(#status):not(#error) { display: none !important; }
+#runbox { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+#runbox #running { flex: 1; }
+#runbox .btn { flex: none; }
+.wkrun { margin: 10px 12px 0; padding: 10px 12px; border-radius: 12px; background: var(--accent-soft); border: 1px solid #c9d8e8; }
+.wkrun b { display: block; font-size: 16px; }
+.wkrun span { font-size: 14.5px; }
+.wkmoves { margin: 0 12px; background: #fff; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.wkmove { display: block; width: 100%; text-align: left; background: #fff; border: 0; border-top: 1px solid var(--line); padding: 10px 12px; color: var(--ink); font: inherit; }
+.wkmove:first-child { border-top: 0; }
+.wkmove.on { background: var(--accent-soft); }
+.wkmove .mn { font-weight: 700; font-size: 16px; overflow-wrap: anywhere; }
+.wkmove .md { font-size: 14px; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
+.wknone { padding: 12px; color: var(--muted); font-size: 14.5px; }
+.wkend { display: block; width: calc(100% - 24px); margin: 16px 12px 0; background: #b85a2e; color: #fff; border: 0; text-align: center; font-weight: 700; font-size: 17px; border-radius: 14px; padding: 14px; }
+.wkedit { margin: 8px 12px 0; background: #fff; border: 2px solid var(--accent); border-radius: 14px; padding: 10px 12px; }
+.wkedit .t { font-weight: 700; margin-bottom: 8px; overflow-wrap: anywhere; }
+.wkkind { display: flex; gap: 6px; margin-bottom: 10px; }
+.wkkind .choice { margin: 0; padding: 8px 6px; font-size: 14px; display: block; text-align: center; flex: 1; }
+.wklbl { font-size: 13px; color: var(--muted); display: block; margin-bottom: 3px; }
+.wkname { width: 100%; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 9px 8px; font: inherit; font-size: 16px; color: var(--ink); margin-bottom: 8px; }
+.wkchips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+.wkchips .l { font-size: 13px; color: var(--muted); width: 100%; }
+.wkchip { border: 1px solid var(--line); background: #fff; border-radius: 16px; padding: 5px 11px; font-size: 14px; color: var(--ink); max-width: 100%; overflow-wrap: anywhere; text-align: left; }
+.wkgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; }
+.wkgrid input { width: 100%; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 9px 8px; font: inherit; font-size: 16px; color: var(--ink); }
+.wkeach { display: inline-flex; gap: 8px; align-items: center; border: 1px solid var(--line); background: #fff; border-radius: 18px; padding: 6px 12px; margin: 10px 0 4px; font-size: 15px; color: var(--ink); }
+.wkeach i { width: 14px; height: 14px; border-radius: 3px; border: 1.5px solid var(--accent); display: inline-block; }
+.wkeach.on i { background: var(--accent); }
+.wktwo { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 10px; }
+.wkout { background: none; border: 0; color: var(--bad); font-weight: 600; font-size: 15px; padding: 6px 0; }
+.wknote { margin: 8px 0 0; font-size: 14px; color: var(--bad); }
+
