@@ -184,8 +184,28 @@
  * medicine" choice ticked is read as this page opens that entry, on the usual one it started from with its change, so Save
  * changes keeps what it recorded (W1); a "from" left by page 028-4 on an entry that is not custom does not make an untouched
  * Save changes a change (N3).
+ * 030 (2026-10-14, session 28): Medicine is "tick any that apply" (R115; D214, D215, D225, D226). Tapping Medicine ticks
+ * nothing; any of his sets can be ticked, and Something else along with them; a ticked one tapped again is unticked. The
+ * sheet reads "Set A + Set B" (and "+ Something else", his words after the sets' contents) in the order the sets are listed
+ * (G030-1). "Change this time" under the sets shows one row per medicine in every set ticked; a set ticked while it is open
+ * gets its usual rows and keeps what was typed for the others, a set unticked takes only its rows away (D225); a change is
+ * saved as Custom medicine, from "Set A + Set B" (G030-3). Save stops with nothing ticked (G030-2). The yellow screen opens
+ * with what the entry recorded ticked (G030-4). A set's name cannot hold a + standing alone (G030-5). Shake is unchanged.
+ * Kept in the draft's Medicine part as names, se and chgs (one change per set, by its ID), with pick, what and chg kept as
+ * page 029-3 reads them (the way back, G030-6) and sig, their fingerprint, so a part last written by 029-3 is read from them.
+ * 030-2 (Agent AG): a tick or untick counts as touching Medicine, so on the yellow screen what the screen shows is saved, never a
+ * change it no longer shows (W1); an entry opens with its sets in the order it recorded them, so it is kept as recorded and a
+ * change it recorded shows even after the sets' order changed (W2); a stored Medicine part that is not an object reads as
+ * Something else, as on 029-3, instead of stopping the page (W3); the note when everything is left out says to untick (N1); a
+ * set already named with a + on its own can be changed without renaming it (N4).
+ * 030-3 (Agent AG's recheck): ticks no longer count as touching Medicine (W4: an entry whose ticks end as recorded is kept as
+ * recorded, G40); instead, on the yellow screen a recorded change is kept only while the rows show it (W1 as fixed in 030-2 by
+ * other means). The ticks are compared as sets of names, whatever their order, and the entry opens with its sets in screen order,
+ * its recorded change read in the order it was recorded (N5, N6; W2 stays fixed).
+ * 030-4 (Agent AG, N9): page 029-3 (the way back) is handed the recorded name only while this page would keep the entry as
+ * recorded, so a change taken away on the yellow screen is not brought back there.
  */
-var PAGE_VERSION = '029-3';
+var PAGE_VERSION = '030-5';
 var SCREENS = ['Morning', 'Intraday', 'Evening'];
 var SCORE_ROWS = ['Mind', 'Body', 'Balance'];
 var MORNING_SCORES = [{ label: 'Quality', key: 'Sleep quality' }, { label: 'Amount', key: 'Sleep amount' }];
@@ -267,6 +287,249 @@ function customPickBack(v) {
     }
     v.dr[kind] = part;
   });
+}
+// ------------------------------------------------------------------ Medicine: tick any (030)
+// The draft's Medicine part: names (the sets ticked, in screen order), se (Something else ticked), what (its words), chgs
+// (Change this time: one { id, base, rows } per set, by its ID; open while it holds any), touched and chgLost as 026. pick,
+// what and chg are kept as page 029-3 reads them (G030-6): pick the first set ticked (or Something else, or null), chg that
+// set's change when it is the only one; on the yellow screen, untouched and still as recorded, pick is the recorded name, so
+// page 029-3 keeps the entry as recorded. sig is their fingerprint: a part whose pick, what or chg were since written by an
+// older page is read from them alone.
+var JOIN = ' + ';
+function medSig(p) {
+  return stable([typeof p.pick === 'string' ? p.pick : null, typeof p.what === 'string' ? p.what : '', isObj(p.chg) ? p.chg : null, p.touched === true]);
+}
+// Whether the ticks are the ones a recorded Medicine names, in any order (030-3; Agent AG's recheck, N6).
+function medSameAs(p, label) {
+  if (typeof label !== 'string') return false;
+  var mine = medLabel(p);
+  if (mine === label) return true;
+  if (mine === null) return false;
+  var parts = label.split(JOIN), se = false;
+  if (parts.length > 1 && parts[parts.length - 1] === SOMETHING_ELSE) { se = true; parts.pop(); }
+  if (se !== p.se || parts.length !== p.names.length) return false;
+  var a = parts.slice().sort(), b = p.names.slice().sort();
+  return a.every(function (n, i) { return n === b[i]; });
+}
+function medLabel(p) {
+  if (!p.names.length) return p.se ? SOMETHING_ELSE : null;
+  return p.names.join(JOIN) + (p.se ? JOIN + SOMETHING_ELSE : '');
+}
+function medSync(p, orig, kept) {
+  if (!isObj(p)) return p;
+  var seen = {};
+  p.names = (Array.isArray(p.names) ? p.names : []).filter(function (n) {
+    if (typeof n !== 'string' || n === SOMETHING_ELSE || seen['n:' + n]) return false;
+    seen['n:' + n] = true;
+    return true;
+  });
+  p.se = p.se === true;
+  if (typeof p.what !== 'string') p.what = '';
+  if (!isObj(p.chgs)) p.chgs = {};
+  Object.keys(p.chgs).forEach(function (id) {
+    if (!chgOk(p.chgs[id]) || p.chgs[id].id !== id) { delete p.chgs[id]; p.chgLost = true; }
+  });
+  if (p.touched !== undefined && typeof p.touched !== 'boolean') delete p.touched;
+  var label = medLabel(p);
+  if (isObj(orig) && kept !== false && p.touched !== true && typeof orig['Medicine'] === 'string' && label !== null && medSameAs(p, recName(orig, 'Medicine')) &&     // 030-4 (N9)
+      (p.names.length > 1 || (p.se && p.names.length))) p.pick = recName(orig, 'Medicine');      // 030-3: as recorded
+  else p.pick = p.names.length ? p.names[0] : (p.se ? SOMETHING_ELSE : null);
+  var ids = Object.keys(p.chgs);
+  if (p.names.length === 1 && ids.length === 1 && p.pick === p.names[0]) p.chg = p.chgs[ids[0]]; else delete p.chg;
+  p.sig = medSig(p);
+  return p;
+}
+// A stored Medicine part read: as this page wrote it, or (written or changed by an older page) from pick and chg.
+function medRead(p, orig) {
+  if (!isObj(p)) return p;
+  var mine = Array.isArray(p.names) && typeof p.sig === 'string' && p.sig === medSig(p);
+  if (!mine) {
+    var r = isObj(orig) && typeof p.pick === 'string' && p.pick !== SOMETHING_ELSE && p.pick === recName(orig, 'Medicine') &&
+            p.pick.indexOf(JOIN) >= 0 ? medOpen(orig) : null;
+    if (r) { p.names = r.names; p.se = r.se; p.what = r.what; p.chgs = r.chgs; if (r.chgLost) p.chgLost = true; }
+    else {
+      p.names = typeof p.pick === 'string' && p.pick !== SOMETHING_ELSE ? [p.pick] : [];
+      p.se = p.pick === SOMETHING_ELSE;
+      p.chgs = {};
+      if (isObj(p.chg) && chgOk(p.chg)) p.chgs[p.chg.id] = p.chg;
+    }
+  }
+  return medSync(p, orig);
+}
+function medPart(p) { if (isObj(p) && !Array.isArray(p.names)) medRead(p); return p; }
+function medEmpty() { return medSync({ pick: null, what: '', names: [], se: !USUALS.Medicine.length, chgs: {} }); }
+// The sets in use, ticked, in screen order.
+function medSets(p) {
+  return p && Array.isArray(p.names) ? p.names.map(function (n) { return usualOf('Medicine', n); }).filter(function (u) { return !!u; }) : [];
+}
+// Names in screen order (G030-1): the sets in use as listed, then any other (a recorded one, G40).
+function medOrder(names) {
+  var order = USUALS.Medicine.map(function (u) { return u.name; });
+  return order.filter(function (n) { return names.indexOf(n) >= 0; }).concat(names.filter(function (n) { return order.indexOf(n) < 0; }));
+}
+function medOn(p, name) {
+  if (!isObj(p)) return false;                                // 030-2 (Agent AG, W3)
+  medPart(p);
+  return name === SOMETHING_ELSE ? p.se === true : p.names.indexOf(name) >= 0;
+}
+// The label a Save gives the sets ticked (the sheet's Medicine, or Medicine from for a custom one).
+function medFromLabel(p) {
+  return medSets(p).map(function (u) { return u.name; }).join(JOIN) + (p.se ? JOIN + SOMETHING_ELSE : '');
+}
+function medFresh(u) {
+  var base = rowsOf('Medicine', u);
+  if (!itemsOk(base)) return null;
+  return { id: u.id, base: base, rows: base.map(function (b) { return { amount: b.amount, out: false }; }) };
+}
+// Change this time, open: every set ticked with its rows, put together (rows are the sets' own, so typing changes them).
+function medView(p) {
+  if (!isObj(p) || !isObj(p.chgs)) return null;
+  var sets = medSets(p);
+  if (!sets.length) return null;
+  var parts = sets.map(function (u) { var c = p.chgs[u.id]; return c && chgOk(c) && c.id === u.id ? c : null; });
+  if (!parts.some(function (c) { return !!c; })) return null;
+  var filled = false;
+  for (var i = 0; i < sets.length; i++) {
+    if (parts[i]) continue;
+    parts[i] = medFresh(sets[i]);
+    if (!parts[i]) return null;
+    p.chgs[sets[i].id] = parts[i];
+    filled = true;
+  }
+  if (filled) medSync(p);
+  var base = [], rows = [];
+  parts.forEach(function (c) { base = base.concat(c.base); rows = rows.concat(c.rows); });
+  return { id: 'medicine', base: base, rows: rows };
+}
+// A recorded line as rows on the given sets as they are now: each recorded part in order on the next row it reads as,
+// rows with no part left out; with Something else, the parts left after the rows are its words. Null if it cannot be read so.
+function medRows(names, contents, se) {
+  var sets = names.map(function (n) { return usualOf('Medicine', n); });
+  if (!sets.length || sets.some(function (u) { return !u; })) return null;
+  var bases = sets.map(function (u) { return rowsOf('Medicine', u); });
+  if (bases.some(function (b) { return !itemsOk(b); })) return null;
+  var parts = typeof contents === 'string' && contents !== '' ? contents.split(', ') : [], j = 0, chgs = {}, same = true;
+  bases.forEach(function (base, k) {
+    var rows = base.map(function (b) {
+      if (j < parts.length) {
+        var a = amountIn('Medicine', b, parts[j]);
+        if (a === '' && b.amount !== '') a = null;
+        if (a !== null) { j++; return { amount: a, out: false }; }
+      }
+      return { amount: b.amount, out: true };
+    });
+    var c = { id: sets[k].id, base: base, rows: rows };
+    if (!cxSame(c)) same = false;
+    chgs[c.id] = c;
+  });
+  var what = '';
+  if (j < parts.length) { if (!se) return null; what = parts.slice(j).join(', '); }
+  return { chgs: chgs, what: what, same: same };
+}
+// A recorded Medicine split into its sets and Something else: { names, se }, or null.
+function medParts(label) {
+  if (typeof label !== 'string' || label === '') return null;
+  if (usualOf('Medicine', label)) return { names: [label], se: false };
+  var parts = label.split(JOIN), se = false;
+  if (parts.length > 1 && parts[parts.length - 1] === SOMETHING_ELSE) { se = true; parts.pop(); }
+  if (!parts.length || parts.some(function (n) { return !usualOf('Medicine', n); })) return null;
+  return { names: parts, se: se };              // 030-2 (Agent AG, W2): in the order recorded; a tick puts them in screen order
+}
+// How the yellow screen opens an entry's recorded Medicine with ticks (G030-4): { names, se, what, chgs, chgLost }, or null
+// when it cannot (a set no longer in use, or Something else's words not found after the sets' contents), and the recorded
+// one is then offered as one choice, as before (fixExtra).
+function medOpen(f) {
+  if (!isObj(f) || typeof f['Medicine'] !== 'string') return null;
+  var label = recName(f, 'Medicine'), cu = recCustom(f, 'Medicine');
+  var contents = typeof f['Medicine contents'] === 'string' ? f['Medicine contents'] : '';
+  if (label === SOMETHING_ELSE) return cu ? null : { names: [], se: true, what: contents, chgs: {} };
+  var t = medParts(label);
+  if (!t) return null;
+  var r = { names: medOrder(t.names), se: t.se, what: '', chgs: {} };      // 030-3 (N5): ticks and rows in screen order
+  if (!cu) {
+    if (t.se) {
+      var pre = t.names.map(function (n) { return usualOf('Medicine', n).contents; }).filter(function (s) { return s !== ''; }).join(', ');
+      if (contents === pre) r.what = '';
+      else if (pre === '') r.what = contents;
+      else if (contents.indexOf(pre + ', ') === 0) r.what = contents.slice(pre.length + 2);
+      else return null;
+    }
+    return r;
+  }
+  var m = medRows(t.names, contents, t.se);
+  if (!m) { r.chgLost = true; return r; }        // cannot be shown on the sets as they are now: kept as recorded (AC-W4)
+  r.what = m.what;
+  if (!m.same) r.chgs = m.chgs;
+  return r;
+}
+// The recorded change as rows on the sets as they are now, when it differs from them (as recordedRows).
+function medRecRows(o) {
+  var t = medParts(recName(o, 'Medicine'));
+  if (!t) return null;
+  var m = medRows(t.names, o['Medicine contents'], t.se);
+  return m && !m.same ? m : null;
+}
+// On the yellow screen: is Medicine saved exactly as the entry recorded it? (keptAsRecorded for 030)
+function medKept(fx) {
+  var o = fx.orig, p = fx.dr && fx.dr.Medicine;
+  if (!isObj(p) || !Array.isArray(p.names) || typeof o['Medicine'] !== 'string' || p.touched === true) return false;
+  var rl = recName(o, 'Medicine');
+  if (rl === SOMETHING_ELSE && !recCustom(o, 'Medicine')) return false;
+  if (!medSameAs(p, rl)) return false;                     // 030-3: in any order (N6)
+  if (o['Medicine changed'] === undefined) return true;    // G40: kept as recorded, however the ticks got back there (W4)
+  if (p.chgLost === true) return true;
+  var rec = medRecRows(o), v = medView(p);
+  if (!rec) return true;                                    // it cannot be shown on the sets as they are now (AC-W4, AC-W6)
+  if (!v) return false;                                     // closed: the screen shows each set as it is (AC-W2)
+  return medSets(p).every(function (u) {                    // open: only while the rows are the recorded change (W1)
+    var a = p.chgs[u.id], b = rec.chgs[u.id];
+    return !!a && !!b && a.rows.length === b.rows.length && a.rows.every(function (r, i) {
+      return r.out === b.rows[i].out && (r.out || sameAmount(amountNorm(r.amount), amountNorm(b.rows[i].amount)));
+    });
+  });
+}
+// A set ticked or unticked (D215, D225); the recorded one (fixExtra) stands alone.
+function medTick(name, isExtra) {
+  var dr = idr();
+  if (!isObj(dr.Medicine)) dr.Medicine = medSync({ pick: null, what: '', names: [], se: false, chgs: {} });
+  var p = medPart(dr.Medicine);
+  var open = !!medView(p);
+  var inUse = function (n) { return !!usualOf('Medicine', n); };
+  if (name === SOMETHING_ELSE) {
+    p.se = !p.se;
+    if (p.se) p.names = p.names.filter(inUse);
+  } else if (p.names.indexOf(name) >= 0) {
+    p.names = p.names.filter(function (n) { return n !== name; });
+    var u = usualOf('Medicine', name);
+    if (u) delete p.chgs[u.id];
+  } else if (isExtra) {
+    p.names = [name]; p.se = false; p.chgs = {}; delete p.touched;
+  } else {
+    p.names = medOrder(p.names.filter(inUse).concat([name]));
+    var u2 = usualOf('Medicine', name);
+    if (open && u2) { var c = medFresh(u2); if (c) p.chgs[u2.id] = c; }
+  }
+  medSync(p);
+}
+// Change this time tapped: the rows of every set ticked; on the yellow screen, from what the entry recorded when it can be
+// read that way (as cxStart).
+function medStart(p) {
+  var sets = medSets(p);
+  if (!sets.length) return false;
+  var fx = fixOn('Intraday') ? state.fix : null;
+  var rt = fx ? medParts(recName(fx.orig, 'Medicine')) : null;
+  if (fx && rt && medSameAs(p, recName(fx.orig, 'Medicine')) && p.touched !== true) {          // 030-3: in any order
+    var m = medRows(rt.names, fx.orig['Medicine contents'], rt.se);
+    if (m) { p.chgs = m.chgs; return true; }
+  }
+  var chgs = {};
+  for (var i = 0; i < sets.length; i++) {
+    var c = medFresh(sets[i]);
+    if (!c) return false;
+    chgs[sets[i].id] = c;
+  }
+  p.chgs = chgs;
+  return true;
 }
 // Names a usual one cannot have (G025-2; G029-5): the one it matches, or ''.
 function reservedName(name) {
@@ -429,8 +692,8 @@ function emptyEvening() {
   return { fixed: null, scores: { 'Whole day Mind': null, 'Whole day Body': null, 'Whole day Balance': null },
            times: { 'Got in bed': null }, notable: false, why: '', endAns: null };
 }
-// A screen kept by an earlier page version gets the new parts, empty.
-function fillDraft(d) {
+// A screen kept by an earlier page version gets the new parts, empty. orig: the entry being changed, if it is one (030).
+function fillDraft(d, orig) {
   var e = emptyDraft();
   Object.keys(e).forEach(function (k) { if (d[k] === undefined) d[k] = e[k]; });
   if (!d.other || typeof d.other !== 'object') d.other = { on: false, text: '' };
@@ -454,6 +717,8 @@ function fillDraft(d) {
     if (p.touched !== undefined && typeof p.touched !== 'boolean') delete p.touched;
     if (p.chgLost !== undefined && p.chgLost !== true) delete p.chgLost;
   });
+  if (d.Medicine && !isObj(d.Medicine)) d.Medicine = { pick: SOMETHING_ELSE, what: '' };     // 030-2 (Agent AG, W3)
+  if (isObj(d.Medicine)) medRead(d.Medicine, orig);          // 030
   return d;
 }
 function otherTicked(dr) {
@@ -498,6 +763,10 @@ function storedFix(f) {
 // The four things kept like half-filled screens, by their key in storage (019 adds KEY_FIX).
 var SLOTS = ['draft', 'draft-Morning', 'draft-Evening', KEY_FIX, KEY_WK];     // 028 adds the moves of the workout running
 function valueOfKey(k) {
+  if (k === KEY_FIX && state.fix && fixScreenOf(state.fix) === 'Intraday' && state.fix.dr && isObj(state.fix.dr.Medicine)) {
+    medSync(medPart(state.fix.dr.Medicine), state.fix.orig, medKept(state.fix));         // 030; 030-4 (N9)
+  }
+  if (k === 'draft' && state.draft && isObj(state.draft.Medicine)) medSync(medPart(state.draft.Medicine));     // 030
   if (k === KEY_FIX) return state.fix ? storedFix(state.fix) : undefined;
   if (k === KEY_WK) return state.wkd || undefined;
   return k === 'draft' ? state.draft : (k === 'draft-Morning' ? state.mdraft : state.edraft);
@@ -725,7 +994,7 @@ function ticksFromOrig(v) {
 function normFix(v) {
   var scr = fixScreenOf(v);
   if (scr === 'Intraday') { ticksFromOrig(v); customPickBack(v); }          // 029-2
-  var d = scr === 'Intraday' ? fillDraft(v.dr) : fillOther(v.sdr !== undefined ? v.sdr : v.dr, emptyOf(scr));
+  var d = scr === 'Intraday' ? fillDraft(v.dr, v.orig) : fillOther(v.sdr !== undefined ? v.sdr : v.dr, emptyOf(scr));     // 030: orig
   return { id: v.id, base: v.base, test: !!v.test, orig: v.orig, screen: scr, dr: d, opened: v.opened === undefined ? null : v.opened };
 }
 
@@ -1076,6 +1345,7 @@ function fieldsFor(dr, savedAt) {
   ['Shake', 'Medicine'].forEach(function (kind) {
     var pick = dr[kind];
     if (!pick || pick.pick === null) return;      // none picked yet (025, D173): Save stops before this
+    if (kind === 'Medicine') { medFields(f, medPart(pick)); return; }          // 030
     var usual = USUALS[kind].filter(function (u) { return u.name === pick.pick; })[0];
     if (usual) {
       f[kind] = usual.name;
@@ -1105,6 +1375,32 @@ function fieldsFor(dr, savedAt) {
   OTHER_TICKS.forEach(function (t) { if (dr.other[t.key] === true) f[t.column] = 'Yes'; });     // 024 (R100)
   if (dr.other.on && hasText(dr.other.text)) f['Other'] = dr.other.text;
   return tailFields(f, dr, savedAt);
+}
+
+// Medicine (030): one set as before; several as "Set A + Set B", their contents in order; with Something else, its words
+// after them; changed with Change this time, Custom medicine from "Set A + Set B" (G030-3). A recorded one no longer in use
+// (fixExtra) is saved as Something else, as on 029-3; untouched on the yellow screen it is kept as recorded (fixFields).
+function medFields(f, p) {
+  var sets = medSets(p);
+  if (!sets.length) {
+    f['Medicine'] = SOMETHING_ELSE;
+    if (hasText(p.what)) f['Medicine contents'] = p.what;
+    return;
+  }
+  var label = medFromLabel(p), words = p.se && hasText(p.what) ? p.what : '';
+  var cx = cxResult('Medicine', p);
+  if (cx && cx.contents !== undefined) {
+    f['Medicine'] = CUSTOM.Medicine;
+    f['Medicine from'] = label;
+    f['Medicine contents'] = cx.contents + (words ? ', ' + words : '');
+    f['Medicine changed'] = cx.changed;
+    return;
+  }
+  f['Medicine'] = label;
+  if (sets.length === 1 && !words) { f['Medicine contents'] = sets[0].contents; return; }
+  var cs = sets.map(function (u) { return u.contents; }).filter(function (s) { return s !== ''; });
+  if (words) cs.push(words);
+  if (cs.length) f['Medicine contents'] = cs.join(', ');
 }
 
 function fieldsMorning(dr, savedAt) {
@@ -1590,6 +1886,14 @@ function fixDraftFrom(f) {
   d.personal = f['Personal'] === 'Yes';
   USUAL_KINDS.forEach(function (kind) {
     if (typeof f[kind] !== 'string') return;
+    if (kind === 'Medicine') {                    // 030: with what it recorded ticked, else the recorded one as one choice
+      var r = medOpen(f), rn = recName(f, kind);
+      d.Medicine = r ? { pick: null, what: r.what, names: r.names, se: r.se, chgs: r.chgs }
+                     : { pick: null, what: '', names: typeof rn === 'string' ? [rn] : [], se: false, chgs: {} };
+      if (r && r.chgLost) d.Medicine.chgLost = true;
+      medSync(d.Medicine, f);
+      return;
+    }
     var nm = recName(f, kind);                    // 029: a custom one opens on the usual one it started from (G029-2)
     d[kind] = { pick: nm, what: f[kind] === SOMETHING_ELSE && typeof f[kind + ' contents'] === 'string' ? f[kind + ' contents'] : '' };
     // 026: recorded with a change for that entry: its rows open, mapped onto the usual one as it is now.
@@ -1644,7 +1948,8 @@ function fixExtra(kind) {
   if (!fx) return null;
   var name = recName(fx.orig, kind);             // 029 (G029-2)
   if (typeof name !== 'string' || name === SOMETHING_ELSE) return null;
-  if (USUALS[kind].some(function (u) { return u.name === name; })) return null;
+  if (kind === 'Medicine' && medOpen(fx.orig)) return null;                    // 030: opened with ticks
+  if (kind !== 'Medicine' && USUALS[kind].some(function (u) { return u.name === name; })) return null;
   return { name: name, contents: typeof fx.orig[kind + ' contents'] === 'string' ? fx.orig[kind + ' contents'] : '' };
 }
 // Every key fieldsMorning() and fieldsEvening() can write (021).
@@ -2597,6 +2902,21 @@ function removedOk(r) {
 function settleUsualPicks(dr) {
   USUAL_KINDS.forEach(function (kind) {
     var pick = dr && dr[kind];
+    if (kind === 'Medicine') {                       // 030: the sets no longer in use go under Something else
+      if (!isObj(pick)) return;
+      medPart(pick);
+      var odd = pick.names.filter(function (n) { return !usualOf('Medicine', n); });
+      var none = !pick.names.length && !pick.se && !USUALS.Medicine.length;
+      if (!odd.length && !none) return;
+      pick.names = pick.names.filter(function (n) { return !!usualOf('Medicine', n); });
+      if (odd.length && !hasText(pick.what)) pick.what = odd.join(', ');
+      pick.se = true;
+      var keep = {};
+      medSets(pick).forEach(function (u) { keep[u.id] = true; });
+      Object.keys(pick.chgs).forEach(function (id) { if (!keep[id]) delete pick.chgs[id]; });
+      medSync(pick);
+      return;
+    }
     if (!pick || pick.pick === SOMETHING_ELSE) return;
     if (pick.pick === null && USUALS[kind].length) return;          // none picked yet (025, D173)
     if (USUALS[kind].some(function (u) { return u.name === pick.pick; })) return;
@@ -2626,7 +2946,7 @@ function usualsNote(kind) {
 // ------------------------------------------------------------------ a usual one changed for one entry (026)
 
 var CX_WORDS = { Shake: { btn: 'Change this shake', reads: 'This shake:', changed: 'Changed for this shake:', list: 'changed for this shake: ' },
-                 Medicine: { btn: 'Change this set', reads: 'This time:', changed: 'Changed this time:', list: 'changed this time: ' } };
+                 Medicine: { btn: 'Change this time', reads: 'This time:', changed: 'Changed this time:', list: 'changed this time: ' } };     // 030 (drawing 4)
 var CX = {};                      // the drawn parts, for Shake and Medicine
 function usualOf(kind, name) {
   if (typeof name !== 'string' || name === SOMETHING_ELSE) return null;
@@ -2643,6 +2963,7 @@ function chgOk(c) {
 }
 // The change kept for this pick, if it belongs to the usual one picked (by its ID, so a rename keeps it).
 function cxOf(kind, p) {
+  if (kind === 'Medicine') return p ? medView(medPart(p)) : null;          // 030: every set ticked
   if (!p || !p.chg || !chgOk(p.chg)) return null;
   var u = usualOf(kind, p.pick);
   return u && u.id === p.chg.id ? p.chg : null;
@@ -2708,7 +3029,11 @@ function cxResult(kind, p) {
     if (b.amount === '') { if (a !== '') half = false; }
     else { anyNum = true; if (Number(a) !== Number(halfOf(b.amount))) half = false; }
   }
-  if (!kept.length) return { bad: 'Everything in ' + p.pick + ' is left out. Tap ' + kind + ' again to take it off instead, or tap Put back.' };
+  if (!kept.length && kind === 'Medicine' && (medSets(p).length > 1 || p.se)) {        // 030-2 (Agent AG, N1)
+    return { bad: 'Everything in ' + medSets(p).map(function (u) { return u.name; }).join(JOIN) + ' is left out. Untick what you didn’t take instead, or tap Put back.' };
+  }
+  if (!kept.length) return { bad: 'Everything in ' + (kind === 'Medicine' ? medSets(p).map(function (u) { return u.name; }).join(JOIN) : p.pick) +
+                                   ' is left out. Tap ' + kind + ' again to take it off instead, or tap Put back.' };     // 030
   if (!diffs.length && !outs.length) return null;
   var changed = (half && anyNum && diffs.length ? ['half'] : diffs).concat(outs).join('; ');
   return { contents: contentsOf(kind, kept), changed: changed };
@@ -2767,8 +3092,9 @@ function cxStart(kind, p) {
 // touched, and either it recorded no change (G40), or its recorded change is what the rows show, or the rows cannot show
 // it (could not be read back, AC-W4; or do not fit the usual one as it is now, AC-W6). A recorded change whose rows were
 // closed by another pick or by Shake off and on is not kept: what the screen shows is saved (AC-W2).
-function recordedRows(kind, o) { var m = cxFromRecorded(kind, recName(o, kind), o[kind + ' contents']); return m && !cxSame(m) ? m : null; }     // 029
+function recordedRows(kind, o) { if (kind === 'Medicine') return medRecRows(o); var m = cxFromRecorded(kind, recName(o, kind), o[kind + ' contents']); return m && !cxSame(m) ? m : null; }     // 029
 function keptAsRecorded(fx, kind) {
+  if (kind === 'Medicine') return medKept(fx);       // 030
   var o = fx.orig, p = fx.dr && fx.dr[kind];
   if (!p || typeof o[kind] !== 'string' || o[kind] === SOMETHING_ELSE || p.pick !== recName(o, kind) || p.touched === true) return false;     // 029
   if (o[kind + ' changed'] === undefined) return true;
@@ -2786,11 +3112,32 @@ function cxSettle() {
     if (!dr) return;
     USUAL_KINDS.forEach(function (kind) {
       var p = dr[kind];
+      var wau = function (l) { return JSON.stringify(l.map(function (b) { return [b.what, b.amount, b.unit]; })); };
+      if (kind === 'Medicine') {          // 030: each set ticked with its own change
+        if (!isObj(p) || !Array.isArray(p.names) || !isObj(p.chgs)) return;
+        var sets = medSets(p), dropped = false;
+        sets.forEach(function (u) {
+          var c = p.chgs[u.id];
+          if (!c || !chgOk(c) || wau(rowsOf(kind, u)) === wau(c.base)) return;
+          var lostOne = !cxSame(c) && (!x[1] || p.touched === true);
+          delete p.chgs[u.id];
+          dropped = true;
+          if (lostOne) {
+            showError('Your change to ' + u.name + ' for this entry was taken off, because ' + u.name +
+                      ' was changed in My usual ones. Make it again if you need to.');
+          }
+        });
+        if (!dropped) return;
+        if (Object.keys(p.chgs).length) sets.forEach(function (u) { if (!p.chgs[u.id]) { var fr = medFresh(u); if (fr) p.chgs[u.id] = fr; } });
+        if (x[1]) { p.chgLost = true; delete p.touched; }
+        medSync(p);
+        storeDraft(true);
+        return;
+      }
       if (!p || !p.chg || !chgOk(p.chg)) return;
       var u = usualOf(kind, p.pick);
       if (!u) return;                     // not in use here (or not read yet): the change is not used, and kept
       var same = u.id === p.chg.id;
-      var wau = function (l) { return JSON.stringify(l.map(function (b) { return [b.what, b.amount, b.unit]; })); };
       if (same && wau(rowsOf(kind, u)) === wau(p.chg.base)) return;            // AC-R-N2
       // Something of his is lost only if he changed it: on the yellow screen an untouched change is the entry's own,
       // which stays as recorded (AC-R-W1).
@@ -2831,12 +3178,25 @@ function buildCx(kind) {
   w.wrap.appendChild(w.btn); w.wrap.appendChild(w.rec); w.wrap.appendChild(w.body);
   w.sig = '';
   CX[kind] = w;
-  var mine = function () { var p = idr()[kind]; return p && usualOf(kind, p.pick) ? p : null; };
+  var mine = function () {
+    var p = idr()[kind];
+    if (kind === 'Medicine') return isObj(p) && medSets(medPart(p)).length ? p : null;     // 030
+    return p && usualOf(kind, p.pick) ? p : null;
+  };
   w.btn.addEventListener('click', function () {
     var p = mine();
     if (!p) return;
     touch();
     var c = cxOf(kind, p);
+    if (kind === 'Medicine') {                          // 030: open for every set ticked; closes if nothing was changed
+      if (!c) { if (!medStart(p)) return; }
+      else if (cxSame(c)) p.chgs = {};
+      else { showNote('To undo the change, tap Back to usual.'); return; }
+      medSync(p);
+      storeDraft(true);
+      render();
+      return;
+    }
     if (!c) {
       var s = cxStart(kind, p);
       if (!s) return;
@@ -2863,6 +3223,7 @@ function buildCx(kind) {
     var p = mine();
     if (!p) return;
     touch();
+    if (kind === 'Medicine') { p.chgs = {}; medSync(p); }          // 030
     delete p.chg;
     p.touched = true;
     storeDraft(true);
@@ -2941,6 +3302,11 @@ function cxLines(kind, p) {
   cxLine(w.reads, CX_WORDS[kind].reads, kept.length ? kept.join(', ') : 'nothing');
   var res = cxResult(kind, p);
   cxLine(w.chg, CX_WORDS[kind].changed, res === null ? 'nothing yet' : (res.bad ? '—' : res.changed));
+  if (kind === 'Medicine') {             // 030 (drawing 4)
+    w.hint.textContent = res && res.contents !== undefined
+      ? 'For this entry only, saved as Custom medicine (from ' + medFromLabel(p) + '). Your sets stay as they are.'
+      : 'For this entry only. Your sets stay as they are.';
+  }
 }
 // Under the ticked usual one, before the choices after it (drawings 1 to 4). A fault here hides the rows and leaves the
 // rest of the screen drawn (AC-W3).
@@ -2948,6 +3314,7 @@ function renderCx(kind, p) {
   try { drawCx(kind, p); } catch (e) { if (CX[kind]) { CX[kind].wrap.hidden = true; CX[kind].sig = ''; } }
 }
 function drawCx(kind, p) {
+  if (kind === 'Medicine') { drawMedCx(p ? medPart(p) : null); return; }        // 030
   var w = CX[kind];
   if (!w) return;
   var u = p ? usualOf(kind, p.pick) : null;
@@ -2986,11 +3353,47 @@ function drawCx(kind, p) {
   cxLines(kind, p);
 }
 
+// Change this time under the sets (drawings 2 to 4): after the last set, shown once a set is ticked (030).
+function drawMedCx(p) {
+  var w = CX.Medicine;
+  if (!w) return;
+  var sets = medSets(p);
+  var c = sets.length ? medView(p) : null;
+  var anchor = null;
+  if (sets.length && (c || sets.every(function (u) { return itemsOk(rowsOf('Medicine', u)); }))) {
+    var names = USUALS.Medicine.map(function (u) { return u.name; });
+    Array.prototype.forEach.call(el('c-Medicine').querySelectorAll('.choice'), function (b) {
+      if (names.indexOf(b.getAttribute('data-name')) >= 0) anchor = b;
+    });
+  }
+  if (!anchor) { w.wrap.hidden = true; return; }
+  if (anchor.nextSibling !== w.wrap) anchor.parentNode.insertBefore(w.wrap, anchor.nextSibling);
+  w.wrap.hidden = false;
+  var fx = fixOn('Intraday') ? state.fix : null, o = fx ? fx.orig : null;
+  var rec = !!fx && o['Medicine changed'] !== undefined && medKept(fx) && (!c || !medRecRows(o));
+  w.rec.hidden = !rec;
+  if (rec) {
+    cxLine(w.rec, 'This entry recorded:', String(o['Medicine contents'] === undefined ? '' : o['Medicine contents']) +
+           ' (changed: ' + String(o['Medicine changed']) + '). It stays that way unless you change it here; ' +
+           CX_WORDS.Medicine.btn + ' starts from your sets as they are now.');
+  }
+  w.btn.classList.toggle('on', !!c);
+  w.btn.setAttribute('aria-expanded', c ? 'true' : 'false');
+  w.body.hidden = !c;
+  if (!c) { w.sig = ''; return; }
+  var sig = JSON.stringify([c.id, c.base, c.rows.map(function (r) { return r.out; })]);
+  if (w.sig !== sig) { cxBuildRows('Medicine', c); w.sig = sig; }
+  Array.prototype.forEach.call(w.rows.querySelectorAll('input.cxin'), function (inp) {
+    var r = c.rows[Number(inp.getAttribute('data-i'))];
+    if (r && document.activeElement !== inp && inp.value !== r.amount) inp.value = r.amount;
+  });
+  cxLines('Medicine', p);
+}
 
 // ------------------------------------------------------------------ My usual ones (025)
 
 var PICK_NOTE = { Shake: 'Pick which shake you had, or tap Shake again to take it off.',
-                  Medicine: 'Pick which medicine set you had, or tap Medicine again to take it off.' };
+                  Medicine: 'Tick at least one medicine, or tap Medicine again to take it off.' };          // 030 (G030-2)
 // The first of Shake and Medicine tapped with none picked yet (D173), or null.
 function unpickedKind(dr) {
   return USUAL_KINDS.filter(function (k) { return !!dr[k] && dr[k].pick === null; })[0] || null;
@@ -3262,6 +3665,9 @@ function muSave() {
   if (!name) err = 'Give it a name.';
   else if (name.length > USUAL_NAME_TYPED_MAX) err = 'A name can be up to ' + USUAL_NAME_TYPED_MAX + ' characters.';
   else if (reservedName(name)) err = '“' + reservedName(name) + '” can’t be used as a name.';          // 029 (G029-5)
+  else if (kind === 'Medicine' && name !== m.origName && /(^|\s)\+(\s|$)/.test(name)) {     // 030-2 (Agent AG, N4): a new or changed name
+    err = 'A set’s name can’t have a + standing on its own, because the sheet joins sets ticked together with “ + ”.';     // 030 (G030-5)
+  }
   else if (USUALS[kind].some(function (u) { return u.id !== m.id && nameKey(u.name) === name.toLowerCase(); })) {
     err = 'You already have a ' + w.one + ' called ' + name + '. Pick another name.';
   } else if (!rows.length) err = 'Add at least one item.';
@@ -3338,6 +3744,19 @@ function newUsualId(kind, st) {
 // The half-filled screen's pick follows a renamed usual one, or comes off one no longer used (G025-6).
 function movePick(kind, from, to) {
   var dr = state.draft;
+  if (kind === 'Medicine') {                 // 030: the set among those ticked
+    var p = dr && isObj(dr.Medicine) ? medPart(dr.Medicine) : null;
+    if (!p || p.names.indexOf(from) < 0) return;
+    if (to === null) {
+      var u = usualOf('Medicine', from);
+      if (u) delete p.chgs[u.id];
+      p.names = p.names.filter(function (n) { return n !== from; });
+      if (!p.names.length && !p.se) { dr.Medicine = null; settleOf('Intraday', dr); }
+    } else p.names = p.names.map(function (n) { return n === from ? to : n; });
+    if (dr.Medicine) medSync(p);
+    storeDraft(true);
+    return;
+  }
   if (!dr || !dr[kind] || dr[kind].pick !== from) return;
   if (to === null) { dr[kind] = null; settleOf('Intraday', dr); } else dr[kind].pick = to;
   storeDraft(true);
@@ -3647,7 +4066,9 @@ function listParts(f) {
       var cu = recCustom(f, k), from = recName(f, k);                                               // 029 (D217, G029-3)
       title.push(k + ' · ' + (cu ? CUSTOM[k] : f[k]));
       if (f[k] === SOMETHING_ELSE && f[k + ' contents'] !== undefined) words.push([k + ': ', f[k + ' contents']]);
-      else if (cu) {
+      else if (k === 'Medicine' && typeof from === 'string' && from.slice(-(JOIN + SOMETHING_ELSE).length) === JOIN + SOMETHING_ELSE &&
+               f[k + ' contents'] !== undefined) words.push([k + ': ', f[k + ' contents']]);          // 030: what it held, his words in it
+      if (cu) {
         var cb = [];
         if (typeof from === 'string' && from !== CUSTOM[k]) cb.push('from ' + from);
         if (f[k + ' changed'] !== undefined) cb.push(CX_WORDS[k].list + f[k + ' changed']);      // 026
@@ -4043,16 +4464,17 @@ function renderIntraday() {
     tile.classList.toggle('on', !!pick);
     tile.setAttribute('aria-pressed', pick ? 'true' : 'false');
     el('p-' + kind).hidden = !pick;
+    if (kind === 'Medicine' && isObj(pick)) medPart(pick);                   // 030
     Array.prototype.forEach.call(document.querySelectorAll('#p-' + kind + ' .choice'), function (c) {
-      var on = !!pick && pick.pick === c.getAttribute('data-name');
+      var on = !!pick && (kind === 'Medicine' ? medOn(pick, c.getAttribute('data-name')) : pick.pick === c.getAttribute('data-name'));
       c.classList.toggle('on', on);
       c.setAttribute('aria-pressed', on ? 'true' : 'false');
     });
-    el('pk-' + kind).hidden = !(pick && pick.pick === null);             // 025, D173
+    el('pk-' + kind).hidden = kind === 'Medicine' || !(pick && pick.pick === null);     // 025, D173; 030: the title says tick any (drawing 1)
     el('mu-' + kind).hidden = fixOn('Intraday');                          // not while changing a saved entry (G025-5)
     renderCx(kind, pick);                                                  // 026
     var wi = el('w-' + kind);
-    wi.hidden = !(pick && pick.pick === SOMETHING_ELSE);
+    wi.hidden = !(pick && (kind === 'Medicine' ? pick.se === true : pick.pick === SOMETHING_ELSE));     // 030
     var wanted = pick ? pick.what : '';
     if (wi.value !== wanted) wi.value = wanted;
   });
@@ -4269,6 +4691,13 @@ function buildUsualChoices() {
         b.appendChild(k);
         b.addEventListener('click', function () {
           touch();
+          if (kind === 'Medicine') {                                        // 030: tick any (D215)
+            medTick(o.name, !!extra && o.name === extra.name);
+            storeDraft(true);
+            render();
+            if (o.name === SOMETHING_ELSE && idr().Medicine && idr().Medicine.se) el('w-Medicine').focus();
+            return;
+          }
           if (!idr()[kind]) idr()[kind] = { pick: o.name, what: '' };
           if (idr()[kind].pick !== o.name) delete idr()[kind].chg;          // another pick drops the change (G026-6)
           idr()[kind].pick = o.name;
@@ -4290,7 +4719,8 @@ function buildButtons() {
       // One shake: picked at once; two or more: none until he picks (025, D173); none: Something else. Medicine: none until
       // he picks, however many sets (029, R104 as changed, G029-6).
       var n = USUALS[kind].length;
-      idr()[kind] = idr()[kind] ? null : { pick: n === 1 && kind === 'Shake' ? USUALS[kind][0].name : (n ? null : SOMETHING_ELSE), what: '' };
+      if (kind === 'Medicine') idr()[kind] = idr()[kind] ? null : medEmpty();          // 030: nothing ticked, or Something else with no sets
+      else idr()[kind] = idr()[kind] ? null : { pick: n === 1 && kind === 'Shake' ? USUALS[kind][0].name : (n ? null : SOMETHING_ELSE), what: '' };
       settle();
       storeDraft(true);
       render();
@@ -4301,6 +4731,7 @@ function buildButtons() {
     el('w-' + kind).addEventListener('input', function () {
       touch();
       if (idr()[kind]) idr()[kind].what = el('w-' + kind).value;
+      if (kind === 'Medicine' && isObj(idr().Medicine) && Array.isArray(idr().Medicine.names) && idr().Medicine.names.length) idr().Medicine.touched = true;     // 030
       limitNote('w-' + kind, WHAT_MAX, 'That line');
       storeDraft(false);
     });
