@@ -69,17 +69,6 @@
     <div id="scores" class="scores"></div>
     <div class="hint">0 = your normal. Skip any row.</div>
 
-    <h3><label for="comments">Comments</label></h3>
-    <textarea id="comments" class="box" rows="3" placeholder="Type anything. Saved exactly as you type it."></textarea>
-    <div class="ticks">
-      <label class="tk" id="tk-notable"><input type="checkbox" id="notable"> Notable</label>
-      <label class="tk" id="tk-personal"><input type="checkbox" id="personal"> Personal</label>
-    </div>
-    <div id="whywrap" class="whywrap" hidden>
-      <label for="why" class="whylabel">Why notable?</label>
-      <input id="why" class="box line" type="text" placeholder="Why?">
-    </div>
-
     <div class="grid" id="tiles">
       <button type="button" class="tile" id="t-Shake"><span class="chk">&#10003;</span>Shake</button>
       <button type="button" class="tile" id="t-Workout"><span class="chk">&#10003;</span><span id="lbl-Workout">Workout</span></button>
@@ -124,7 +113,7 @@
       <h3><label for="food">Food</label></h3>
       <textarea id="food" class="box" rows="2" placeholder="What did you eat? You can skip this."></textarea>
     </div>
-    <!-- Other opens ticks: Shower, Alcohol, Chores, Something else (increment 024, R100) -->
+    <!-- Other opens ticks: Shower, Alcohol, Chores, Poop (031), Something else (increment 024, R100) -->
     <div id="p-Other" class="panel" hidden>
       <div class="t">Other: tick any</div>
       <div id="c-Other"></div>
@@ -133,6 +122,18 @@
       <h3><label for="other">Other</label></h3>
       <textarea id="other" class="box" rows="2" placeholder="Anything without its own button, like a nap."></textarea>
     </div>
+    <!-- Notable and Personal, then Comments, right above Save (increment 031, R121, D234) -->
+    <div class="ticks ntk">
+      <label class="tk" id="tk-notable"><input type="checkbox" id="notable"> Notable</label>
+      <label class="tk" id="tk-personal"><input type="checkbox" id="personal"> Personal</label>
+    </div>
+    <!-- Ticking Notable opens no box; this shows only when it already holds words (031, R120, G031-3) -->
+    <div id="whywrap" class="whywrap" hidden>
+      <label for="why" class="whylabel">Why notable?</label>
+      <input id="why" class="box line" type="text" placeholder="Why?">
+    </div>
+    <h3><label for="comments">Comments</label></h3>
+    <textarea id="comments" class="box" rows="3" placeholder="Type anything. Saved exactly as you type it."></textarea>
   </section>
 
   <section id="sc-Morning" hidden>

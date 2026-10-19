@@ -204,8 +204,14 @@
  * its recorded change read in the order it was recorded (N5, N6; W2 stays fixed).
  * 030-4 (Agent AG, N9): page 029-3 (the way back) is handed the recorded name only while this page would keep the entry as
  * recorded, so a change taken away on the yellow screen is not brought back there.
+ * Increment 031 (2026-10-19, D233 to D238, R119 to R122): Poop is a tick under Other, just above Something else, saved
+ * as "Yes" in a Poop column like Shower (G031-1). Ticking Notable opens no box: the why goes in Comments; the Why notable
+ * box shows only while it holds words (an older entry being changed, or words typed before this page) or is being typed
+ * in, so no saved words are hidden (G031-3); unticking Notable leaves the why out of the new version, as before (G031-4).
+ * Notable and Personal, then Comments, sit right above Save, on the yellow screen too (G031-2). A walk or workout running:
+ * its End button light red until tapped (style.css; G031-5). Evening, Morning and the Food and Other boxes unchanged.
  */
-var PAGE_VERSION = '030-5';
+var PAGE_VERSION = '031-2';
 var SCREENS = ['Morning', 'Intraday', 'Evening'];
 var SCORE_ROWS = ['Mind', 'Body', 'Balance'];
 var MORNING_SCORES = [{ label: 'Quality', key: 'Sleep quality' }, { label: 'Amount', key: 'Sleep amount' }];
@@ -558,7 +564,8 @@ var KEY_WK = 'draft-workout';     // the moves of the workout running, as typed 
 // The ticks under Other (024, R100); Something else is the Other box (other.on), as before.
 var OTHER_TICKS = [{ name: 'Shower', key: 'shower', column: 'Shower' },
                    { name: 'Alcohol', key: 'alcohol', column: 'Alcohol' },
-                   { name: 'Chores', key: 'chores', column: 'Chores' }];
+                   { name: 'Chores', key: 'chores', column: 'Chores' },
+                   { name: 'Poop', key: 'poop', column: 'Poop' }];                    // 031 (R119, D235)
 
 var state = {
   screen: 'Intraday',             // the page always opens on Intraday (R74)
@@ -681,7 +688,7 @@ function emptyDraft() {
   return { fixed: null, scores: { Mind: null, Body: null, Balance: null },
            comments: '', notable: false, why: '', personal: false,
            Shake: null, Medicine: null, liquids: null, liqWhat: '', food: { on: false, text: '' },
-           other: { on: false, text: '', panel: false, shower: false, alcohol: false, chores: false },
+           other: { on: false, text: '', panel: false, shower: false, alcohol: false, chores: false, poop: false },
            workout: null, endTick: false, endAns: null };
 }
 function emptyMorning() {
@@ -988,8 +995,8 @@ function fp(k, v) {
 function ticksFromOrig(v) {
   var o = v.dr && v.dr.other;
   if (!o || typeof o !== 'object' || !isObj(v.orig)) return;
-  if (OTHER_TICKS.some(function (t) { return typeof o[t.key] === 'boolean'; })) return;
-  OTHER_TICKS.forEach(function (t) { o[t.key] = v.orig[t.column] === 'Yes'; });
+  // 031: tick by tick, so a change kept by 030-5 (no Poop) takes Poop from the entry, which 030-5 could not change.
+  OTHER_TICKS.forEach(function (t) { if (typeof o[t.key] !== 'boolean') o[t.key] = v.orig[t.column] === 'Yes'; });
 }
 function normFix(v) {
   var scr = fixScreenOf(v);
@@ -1861,7 +1868,7 @@ var MADE_BY_SCREEN = ['Log day', 'Time', 'Screen', 'Mind', 'Body', 'Balance', 'C
                       'Shake', 'Shake contents', 'Shake changed', 'Medicine', 'Medicine contents', 'Medicine changed',
                       'Shake from', 'Medicine from',                                                   // 029
                       'Workout', 'Coffee', 'Water', 'Other liquid',
-                      'Other liquid, what', 'Food or snack', 'Food or snack, what', 'Other', 'Shower', 'Alcohol', 'Chores',
+                      'Other liquid, what', 'Food or snack', 'Food or snack, what', 'Other', 'Shower', 'Alcohol', 'Chores', 'Poop',
                       'Calendar date', 'UTC offset', 'Saved at'];
 function versionsRange(id) { return IDBKeyRange.bound(id + ':', id + ':￿'); }
 function newestOf(list) {
@@ -4451,7 +4458,8 @@ function renderIntraday() {
   if (c.value !== dr.comments) c.value = dr.comments;
   el('notable').checked = dr.notable;
   el('personal').checked = dr.personal;
-  el('whywrap').hidden = !dr.notable;
+  // 031 (R120, G031-3): no box for a plain tick; shown while it holds words or is being typed in.
+  el('whywrap').hidden = !(dr.notable && (dr.why !== '' || document.activeElement === el('why')));
   var w = el('why');
   if (w.value !== dr.why) w.value = dr.why;
   el('tk-notable').classList.toggle('on', dr.notable);
@@ -5309,8 +5317,7 @@ function wire() {
     idr().notable = el('notable').checked;
     settle();
     storeDraft(true);
-    render();
-    if (idr().notable) el('why').focus();
+    render();                                        // 031: no box opens, so nothing takes the focus (R120)
   });
   el('why').addEventListener('input', function () {
     touch();

@@ -80,6 +80,7 @@ h3 { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.06em; color
 .box.line { min-height: 0; }
 .box::placeholder { color: #80868e; }
 .ticks { display: flex; gap: 8px; margin: 8px 12px 0; flex-wrap: wrap; }
+.ticks.ntk { margin-top: 14px; }   /* 031: Notable and Personal above Comments, under the buttons (R121) */
 .tk { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line); background: #fff; border-radius: 20px; padding: 6px 13px; font-size: 14.5px; }
 .tk input { width: 17px; height: 17px; margin: 0; accent-color: var(--accent); }
 .tk.on { border-color: var(--accent); background: var(--accent-soft); }
@@ -104,6 +105,8 @@ h3 { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.06em; color
 .box.inpanel { width: 100%; margin: 2px 0 0; }
 .pnote { font-size: 13px; color: var(--muted); margin: -2px 0 8px; }
 .tile.end { color: var(--accent); }
+/* 031 (R122, D236): a walk or workout running: its End button light red until tapped; once tapped, blue with a tick as before */
+.tile.end:not(.on) { background: #fbe3e0; border: 2px solid #e2a29b; color: #8f2a24; }
 .runline { margin: 8px 12px 0; padding: 8px 10px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); font-size: 14px; font-weight: 600; }
 
 .save { display: block; width: calc(100% - 24px); margin: 16px 12px 0; background: var(--accent); color: #fff; border: 0; text-align: center; font-weight: 700; font-size: 17px; border-radius: 14px; padding: 14px; }
