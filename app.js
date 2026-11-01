@@ -210,8 +210,20 @@
  * in, so no saved words are hidden (G031-3); unticking Notable leaves the why out of the new version, as before (G031-4).
  * Notable and Personal, then Comments, sit right above Save, on the yellow screen too (G031-2). A walk or workout running:
  * its End button light red until tapped (style.css; G031-5). Evening, Morning and the Food and Other boxes unchanged.
+ * Increment 032 (2026-11-01, D250 to D261): workout moves. A fourth kind of move, PT: Sets, Reps, Band color, How long
+ * (minutes and seconds, whole numbers, seconds up to 59) and Each side; "Weights or resistance" is called Weights (k 'w'
+ * kept; saved entries keep what they recorded, G032-7). + Add a move offers every name used before, of every kind, newest
+ * first, the same name in other capitals once, as last typed (G032-1); a tap fills in the name, its kind and every box from
+ * the last time, emptying the others (G032-2, G032-3); a change of kind keeps the boxes the new kind also has. Band colors
+ * used before are offered newest first; a color reads in small letters followed by "band" (G032-4); how long reads
+ * "1 min 30 sec" (G032-5). Each move records the time Add this move is tapped (t, HH:MM), kept when it is changed (G032-6);
+ * it reads first on the Workout screen ("1:10 PM · 2 × 20 · green band") and in the Moves column ("1:10 PM Clamshells,
+ * 2 × 20, green band"; D260). The copy for the app carries the kind's name, bandColor, howLongMinutes, howLongSeconds and
+ * time. Page 031-2 (the way back) leaves out a PT move it reads (its kinds do not include PT) and the times and colors.
  */
-var PAGE_VERSION = '031-2';
+// 032-2 (Agent AI): a color typed with the word "band" reads once (F1); names used before: the 12 newest, then
+// "Show all N names" (F2, D263); a stored time is used only if it is a real time of day (N6).
+var PAGE_VERSION = '032-2';
 var SCREENS = ['Morning', 'Intraday', 'Evening'];
 var SCORE_ROWS = ['Mind', 'Body', 'Balance'];
 var MORNING_SCORES = [{ label: 'Quality', key: 'Sleep quality' }, { label: 'Amount', key: 'Sleep amount' }];
@@ -552,14 +564,18 @@ var MADE_UP = 'Made up as I go';                                                
 var WORKOUT_KINDS = ['Walk', MADE_UP];
 var WORKOUT_WORDS = { 'Walk': ['Walk', 'start and End only'], 'Made up as I go': ['Make it up as I go', 'start with no moves, add them as you go'] };
 // The kinds of move (R57 to R59) and the boxes each shows (G032); numbers kept as typed text.
-var MOVE_KINDS = [{ k: 'w', name: 'Weights or resistance', boxes: [['sets', 'Sets'], ['reps', 'Reps'], ['lb', 'Pounds'], ['sec', 'Seconds held']], each: true },
+var MOVE_KINDS = [{ k: 'w', name: 'Weights', boxes: [['sets', 'Sets'], ['reps', 'Reps'], ['lb', 'Pounds'], ['sec', 'Seconds held']], each: true },
+                  { k: 'p', name: 'PT', boxes: [['sets', 'Sets'], ['reps', 'Reps'], ['hm', 'Minutes'], ['hs', 'Seconds']], each: true, band: true },     // 032
                   { k: 's', name: 'Stretch', boxes: [], each: false },
                   { k: 'b', name: 'Bike, rower or similar', boxes: [['min', 'Minutes'], ['level', 'Level'], ['speed', 'Speed']], each: false }];
-var MOVE_FIELDS = ['sets', 'reps', 'lb', 'sec', 'min', 'level', 'speed'];
+var MOVE_FIELDS = ['sets', 'reps', 'lb', 'sec', 'min', 'level', 'speed', 'hm', 'hs'];
+var WHOLE_FIELDS = { hm: true, hs: true };     // how long (032, G032-5): whole numbers
+var BAND_MAX = 20;                             // band color (032, G032-4)
+var NAMES_FIRST = 12;                          // names used before shown before "Show all" (032-2, D263)
+function hmOk(s) { return isHM(s) && Number(s.slice(0, 2)) < 24 && Number(s.slice(3, 5)) < 60; }     // a move's time (032-2)
 var MOVES_MAX = 40;               // moves in one workout (with names of up to 60, the entry stays well within what the sheet takes)
 var MOVE_NAME_MAX = 60;
 var MOVE_NUM_MAX = 7;             // characters in one number box
-var NAMES_SHOWN = 8;              // names used before (G028-4)
 var KEY_WK = 'draft-workout';     // the moves of the workout running, as typed (028)
 // The ticks under Other (024, R100); Something else is the Other box (other.on), as before.
 var OTHER_TICKS = [{ name: 'Shower', key: 'shower', column: 'Shower' },
@@ -1189,13 +1205,15 @@ function endAnsOk(a) {
 function newEndOk(x) { return isObj(x) && (x.unknown === true || (isHM(x.time) && isNum(x.at) && noneOr(x.date, isDay) && noneOr(x.from, isNum))); }
 // The moves of the workout running (028): what the page writes, and nothing else.
 function numOk(x) { return x === undefined || (typeof x === 'string' && x.length <= MOVE_NUM_MAX + 5); }
+function bandOk(x) { return x === undefined || (typeof x === 'string' && x.length <= BAND_MAX + 20); }
 function moveOk(m) {
   return isObj(m) && moveKind(m.k) !== null && typeof m.name === 'string' && m.name.length <= MOVE_NAME_MAX + 20 &&
-         MOVE_FIELDS.every(function (f) { return numOk(m[f]); }) && optBool(m.each);
+         MOVE_FIELDS.every(function (f) { return numOk(m[f]); }) && optBool(m.each) && bandOk(m.band) && noneOr(m.t, hmOk);
 }
 function editOk(e) {
   return isObj(e) && isNum(e.i) && (e.k === null || e.k === undefined || moveKind(e.k) !== null) && optStr(e.name) &&
-         MOVE_FIELDS.every(function (f) { return optStr(e[f]) && (typeof e[f] !== 'string' || e[f].length <= 40); }) && optBool(e.each);
+         MOVE_FIELDS.every(function (f) { return optStr(e[f]) && (typeof e[f] !== 'string' || e[f].length <= 40); }) && optBool(e.each) &&
+         optStr(e.band) && (typeof e.band !== 'string' || e.band.length <= 40);
 }
 function wkOk(v) {
   return isObj(v) && typeof v.id === 'string' && Array.isArray(v.moves) && v.moves.length <= MOVES_MAX &&
@@ -2355,7 +2373,7 @@ function movesCount(n) { return n + (n === 1 ? ' move' : ' moves'); }
 function wkOf(run) { return run && state.wkd && state.wkd.id === run.id ? state.wkd : null; }
 function wkRev() { return (state.wk && state.wk.rev || 0) + 1; }
 function emptyEdit(i, k) {
-  var e = { i: i, k: k || null, name: '', each: false };
+  var e = { i: i, k: k || null, name: '', each: false, band: '' };
   MOVE_FIELDS.forEach(function (f) { e[f] = ''; });
   return e;
 }
@@ -2363,6 +2381,8 @@ function normMove(m) {
   var o = { k: m.k, name: m.name };
   MOVE_FIELDS.forEach(function (f) { if (typeof m[f] === 'string' && m[f] !== '') o[f] = m[f]; });
   if (m.each === true) o.each = true;
+  if (typeof m.band === 'string' && m.band !== '') o.band = m.band;     // 032
+  if (hmOk(m.t)) o.t = m.t;                                             // 032
   return o;
 }
 function normEdit(e) {
@@ -2370,6 +2390,7 @@ function normEdit(e) {
   if (typeof e.name === 'string') o.name = e.name;
   MOVE_FIELDS.forEach(function (f) { if (typeof e[f] === 'string') o[f] = e[f]; });
   o.each = e.each === true;
+  if (typeof e.band === 'string') o.band = e.band;                      // 032
   return o;
 }
 // A stored list of moves as the page uses it: moves and a half-typed move it cannot use are left out (028-3; Agent AE, W2).
@@ -2381,10 +2402,25 @@ function normWk(v) {
   if (ed && ed.i >= 0 && (ms.length !== all.length || ed.i >= ms.length)) ed = null;
   return { id: v.id, moves: ms.map(normMove), edit: ed };
 }
-// One move as it reads, by its parts: "3 × 20", "12 lb", "each side"; "15 min", "level 6", "speed 22".
+// How long (032, G032-5): "1 min 30 sec", "45 sec", "2 min"; nothing typed, nothing; both 0, "0 sec".
+function howLongText(m) {
+  var a = m.hm && Number(m.hm) > 0 ? m.hm + ' min' : '', b = m.hs && Number(m.hs) > 0 ? m.hs + ' sec' : '';
+  if (!a && !b) return m.hm || m.hs ? '0 sec' : '';
+  return a + (a && b ? ' ' : '') + b;
+}
+// One move as it reads, by its parts: "3 × 20", "12 lb", "each side"; "15 min", "level 6", "speed 22";
+// a PT move "2 × 20", "1 min 30 sec", "green band", "each side" (032).
 function moveParts(m) {
   var p = [];
-  if (m.k === 'w') {
+  if (m.k === 'p') {
+    if (m.sets && m.reps) p.push(m.sets + ' × ' + m.reps);
+    else if (m.sets) p.push(m.sets + (m.sets === '1' ? ' set' : ' sets'));
+    else if (m.reps) p.push(m.reps + (m.reps === '1' ? ' rep' : ' reps'));
+    var hl = howLongText(m);
+    if (hl) p.push(hl);
+    if (m.band) p.push(/(^|\s)band$/i.test(m.band) ? m.band.toLowerCase() : m.band.toLowerCase() + ' band');     // "Green band" once (032-2)
+    if (m.each) p.push('each side');
+  } else if (m.k === 'w') {
     var sec = m.sec;
     if (m.sets && m.reps) p.push(m.sets + ' × ' + m.reps);
     else if (m.sets && sec) { p.push(m.sets + ' × ' + sec + ' sec held'); sec = ''; }
@@ -2401,14 +2437,18 @@ function moveParts(m) {
   return p;
 }
 // In the sheet and today's list: "Clamshells, 3 × 20, each side", one move per line (G35, G028-8).
-function moveText(m) { var p = moveParts(m); return m.name + (p.length ? ', ' + p.join(', ') : ''); }
+// Since 032 the time it was added comes first: "1:10 PM Clamshells, 3 × 20, each side" (D260); a move without one, as before.
+function moveText(m) { var p = moveParts(m); return (hmOk(m.t) ? ampm(m.t) + ' ' : '') + m.name + (p.length ? ', ' + p.join(', ') : ''); }
 function movesText(ms) { return ms.map(moveText).join('\n'); }
 // For the copy for the app: the kind's name and each number by name (G028-8).
 function moveData(m) {
   var o = { kind: (moveKind(m.k) || { name: '' }).name, name: m.name };
-  var names = { sets: 'sets', reps: 'reps', lb: 'pounds', sec: 'seconds', min: 'minutes', level: 'level', speed: 'speed' };
+  var names = { sets: 'sets', reps: 'reps', lb: 'pounds', sec: 'seconds', min: 'minutes', level: 'level', speed: 'speed',
+                hm: 'howLongMinutes', hs: 'howLongSeconds' };
   MOVE_FIELDS.forEach(function (f) { if (typeof m[f] === 'string' && m[f] !== '') o[names[f]] = m[f]; });
   if (m.each === true) o.eachSide = true;
+  if (typeof m.band === 'string' && m.band !== '') o.bandColor = m.band;     // 032
+  if (hmOk(m.t)) o.time = m.t;                                               // 032
   return o;
 }
 // The moves as data in the copy for the app, unless that would make the copy longer than the sheet takes (45,000
@@ -2426,13 +2466,14 @@ function editPending(w) {
   var m = w.moves[e.i];
   if (!m) return editHas(e);
   if (e.k !== m.k || cleanTyped(e.name) !== m.name || (e.each === true) !== (m.each === true)) return true;
+  if (cleanTyped(e.band) !== (m.band || '')) return true;     // 032
   return MOVE_FIELDS.some(function (f) { var a = String(e[f] || '').trim(), b = m[f] || ''; return a !== b && !(a !== '' && b !== '' && sameAmount(a, b)); });
 }
 function pendingWords(w) {
   return w.edit && w.edit.i >= 0 ? 'a change to ' + (w.moves[w.edit.i] ? w.moves[w.edit.i].name : 'a move') + ' that is not kept yet' : 'a move that is not in its list yet';
 }
 function editHas(e) {
-  return !!e && (!!cleanTyped(e.name) || e.each === true || MOVE_FIELDS.some(function (f) { return typeof e[f] === 'string' && e[f].trim() !== ''; }));
+  return !!e && (!!cleanTyped(e.name) || e.each === true || !!cleanTyped(e.band) || MOVE_FIELDS.some(function (f) { return typeof e[f] === 'string' && e[f].trim() !== ''; }));
 }
 // The entry being changed is a workout with moves: recorded with them, or running with moves kept (028-3).
 function fixHasMoves() {
@@ -2503,19 +2544,35 @@ function wkLoadNames() {
     Object.keys(newest).map(function (id) { return newest[id]; })
       .filter(function (v) { return v && v.state !== 'undone' && !!v.test === !!state.test && Array.isArray(v.moves); })
       .sort(function (a, b) { return (b.seq || 0) - (a.seq || 0); })
-      .forEach(function (v) { v.moves.slice().reverse().forEach(function (m) { if (moveOk(m)) seen.push({ k: m.k, name: m.name }); }); });
+      .forEach(function (v) { v.moves.slice().reverse().forEach(function (m) { if (moveOk(m)) seen.push(normMove(m)); }); });     // whole moves (032)
     state.wk.names = seen;
     wkRedraw(state.wk.note, state.wk.bad);
   }, function () { /* no names offered */ });
 }
-function wkNamesFor(k) {
-  var out = [], keys = {};
+// Since 032 (D257, G032-1, G032-2): every name used before, of every kind, newest first (this workout's own moves first),
+// the same name in other capitals once, as last typed; each with its last move, to fill in when tapped.
+function wkRecent() {
   var w = state.wkd && state.running && state.wkd.id === state.running.id ? state.wkd.moves.slice().reverse() : [];
-  w.concat((state.wk && state.wk.names) || []).forEach(function (m) {
+  return w.concat((state.wk && state.wk.names) || []);
+}
+function wkNameList() {
+  var out = [], keys = {};
+  wkRecent().forEach(function (m) {
     var key = nameKey(m.name);
-    if (m.k !== k || !key || keys[key] || out.length >= NAMES_SHOWN) return;
+    if (!key || keys[key] || !moveKind(m.k)) return;
     keys[key] = true;
-    out.push(cleanTyped(m.name));
+    out.push(m);
+  });
+  return out;
+}
+// Band colors used before (G032-4), newest first, the same color in other capitals once, as last typed.
+function wkBandList() {
+  var out = [], keys = {};
+  wkRecent().forEach(function (m) {
+    var b = cleanTyped(m.band), key = b.toLowerCase();
+    if (!key || keys[key]) return;
+    keys[key] = true;
+    out.push(b);
   });
   return out;
 }
@@ -2554,6 +2611,7 @@ function renderWorkout() {
     b.type = 'button'; b.setAttribute('data-i', String(i));
     add(b, 'div', 'mn', m.name);
     var p = moveParts(m);
+    if (hmOk(m.t)) p.unshift(ampm(m.t));     // 032 (D260)
     if (p.length) add(b, 'div', 'md', p.join(' · '));
   });
   if (ed) drawWkEdit(sc, add, ed, moves);
@@ -2569,6 +2627,21 @@ function drawWkEdit(sc, add, ed, moves) {
   var bx = add(sc, 'div', 'wkedit');
   bx.id = 'wkedit';
   add(bx, 'div', 't', ed.i >= 0 && moves[ed.i] ? moves[ed.i].name : 'New move');
+  var names = wkNameList();
+  state.wk.chipMoves = names;
+  if (names.length) {
+    var ch = add(bx, 'div', 'wkchips');
+    ch.id = 'wkchips';
+    add(ch, 'span', 'l', 'Used before (tap one to fill it in):');
+    var all = !!state.wk.allNames || names.length <= NAMES_FIRST;     // the 12 newest, then Show all (032-2, D263)
+    names.forEach(function (m, j) {
+      if (!all && j >= NAMES_FIRST) return;
+      var x = cleanTyped(m.name);
+      var c = add(ch, 'button', 'wkchip' + (ed.name && nameKey(ed.name) === nameKey(x) ? ' on' : ''), x);
+      c.type = 'button'; c.setAttribute('data-name', x); c.setAttribute('data-j', String(j));
+    });
+    if (!all) { var sa = add(ch, 'button', 'wkall', 'Show all ' + names.length + ' names'); sa.type = 'button'; sa.id = 'wkallnames'; }
+  }
   var kr = add(bx, 'div', 'wkkind');
   MOVE_KINDS.forEach(function (mk) {
     var c = add(kr, 'button', 'choice' + (ed.k === mk.k ? ' on' : ''), mk.name);
@@ -2576,31 +2649,44 @@ function drawWkEdit(sc, add, ed, moves) {
   });
   var mk0 = moveKind(ed.k);
   if (!mk0) {
-    add(bx, 'div', 'hint', 'Pick the kind of move first.').style.margin = '0 0 6px';
+    add(bx, 'div', 'hint', names.length ? 'Tap a name used before, or pick the kind and type a new name.' : 'Pick the kind of move first.').style.margin = '0 0 6px';
   } else {
     add(bx, 'label', 'wklbl', 'Move').setAttribute('for', 'wkname');
     var nm = add(bx, 'input', 'wkname');
     nm.id = 'wkname'; nm.type = 'text'; nm.autocomplete = 'off'; nm.maxLength = MOVE_NAME_MAX;
-    nm.placeholder = mk0.k === 'w' ? 'Name, like Squats' : (mk0.k === 's' ? 'Name, like Hip stretch' : 'Name, like Rower');     // made-up examples
+    nm.placeholder = mk0.k === 'w' ? 'Name, like Squats' : (mk0.k === 's' ? 'Name, like Hip stretch' : (mk0.k === 'p' ? 'Name, like Clamshells' : 'Name, like Rower'));     // made-up examples
     nm.value = ed.name;
-    var names = wkNamesFor(mk0.k);
-    if (names.length) {
-      var ch = add(bx, 'div', 'wkchips');
-      ch.id = 'wkchips';
-      add(ch, 'span', 'l', 'Used before (tap one instead of typing):');
-      names.forEach(function (x) { var c = add(ch, 'button', 'wkchip', x); c.type = 'button'; c.setAttribute('data-name', x); });
-    }
-    if (mk0.boxes.length) {
+    var grid = function (boxes) {
       var g = add(bx, 'div', 'wkgrid');
-      mk0.boxes.forEach(function (bxi) {
+      boxes.forEach(function (bxi) {
         var cell = add(g, 'div', '');
         add(cell, 'label', 'wklbl', bxi[1]).setAttribute('for', 'wkf-' + bxi[0]);
         var inp = add(cell, 'input', '');
-        inp.id = 'wkf-' + bxi[0]; inp.type = 'text'; inp.inputMode = 'decimal'; inp.autocomplete = 'off'; inp.maxLength = MOVE_NUM_MAX;
+        inp.id = 'wkf-' + bxi[0]; inp.type = 'text'; inp.inputMode = WHOLE_FIELDS[bxi[0]] ? 'numeric' : 'decimal'; inp.autocomplete = 'off'; inp.maxLength = MOVE_NUM_MAX;
         inp.setAttribute('data-f', bxi[0]); inp.placeholder = '–';
         inp.value = ed[bxi[0]] || '';
       });
-    }
+    };
+    if (mk0.band) {
+      // PT (032): Sets and Reps, Band color with the colors used before, then How long in minutes and seconds.
+      grid(mk0.boxes.filter(function (b) { return !WHOLE_FIELDS[b[0]]; }));
+      add(bx, 'label', 'wksub', 'Band color').setAttribute('for', 'wkband');
+      var bi = add(bx, 'input', 'wkband');
+      bi.id = 'wkband'; bi.type = 'text'; bi.autocomplete = 'off'; bi.maxLength = BAND_MAX; bi.placeholder = '–';
+      bi.value = ed.band || '';
+      var bands = wkBandList();
+      if (bands.length) {
+        var bc = add(bx, 'div', 'wkchips');
+        bc.id = 'wkbands';
+        add(bc, 'span', 'l', 'Colors used before:');
+        bands.forEach(function (x) {
+          var c = add(bc, 'button', 'wkchip' + (ed.band && cleanTyped(ed.band).toLowerCase() === x.toLowerCase() ? ' on' : ''), x);
+          c.type = 'button'; c.setAttribute('data-band', x);
+        });
+      }
+      add(bx, 'div', 'wksub', 'How long');
+      grid(mk0.boxes.filter(function (b) { return WHOLE_FIELDS[b[0]]; }));
+    } else if (mk0.boxes.length) grid(mk0.boxes);
     if (mk0.each) {
       var ea = add(bx, 'button', 'wkeach' + (ed.each ? ' on' : ''));
       ea.type = 'button'; ea.id = 'wkeach'; ea.setAttribute('aria-pressed', ed.each ? 'true' : 'false');
@@ -2629,10 +2715,24 @@ function wkCommit() {
     var f = mk.boxes[j][0], v = String(ed[f] || '').trim();
     if (/^\d+\.$/.test(v)) v = v.slice(0, -1);               // "12." is 12 (028-3; Agent AE, N8c)
     if (v === '') continue;
+    if (WHOLE_FIELDS[f]) {                                   // how long: whole numbers, seconds up to 59 (032, G032-5)
+      if (!/^\d+$/.test(v) || v.length > MOVE_NUM_MAX) { wkRedraw('How long: type whole minutes and seconds, like 1 and 30, or leave them empty.', true); focusLater('#wkf-' + f); return; }
+      if (f === 'hs' && Number(v) > 59) { wkRedraw('Seconds go up to 59. Put whole minutes in Minutes.', true); focusLater('#wkf-' + f); return; }
+      m[f] = amountNorm(v);
+      continue;
+    }
     if (!AMOUNT_RE.test(v) || v.length > MOVE_NUM_MAX) { wkRedraw(mk.boxes[j][1] + ': type a number, like 3 or 12.5, or leave it empty.', true); focusLater('#wkf-' + f); return; }
     m[f] = amountNorm(v);
   }
   if (mk.each && ed.each) m.each = true;
+  if (mk.band) {                                             // 032 (G032-4)
+    var band = cleanTyped(ed.band);
+    if (band.length > BAND_MAX) { wkRedraw('Band color: up to ' + BAND_MAX + ' letters.', true); focusLater('#wkband'); return; }
+    if (band) m.band = band;
+  }
+  // The time it was added (032, G032-6): the phone's clock at Add this move; a move changed keeps its time.
+  if (ed.i >= 0 && ed.i < w.moves.length) { if (hmOk(w.moves[ed.i].t)) m.t = w.moves[ed.i].t; }
+  else m.t = timeStr(new Date());     // always a real time of day
   if (ed.i >= 0 && ed.i < w.moves.length) w.moves[ed.i] = m;
   else if (w.moves.length < MOVES_MAX) w.moves.push(m);
   else { wkRedraw('A workout can hold up to ' + MOVES_MAX + ' moves.', true); return; }
@@ -2651,15 +2751,18 @@ function wireWorkout() {
     if (t.id === 'wkendbtn') { endWorkout(); return; }
     if (!wkCanEdit()) { wkRedraw(state.unread[KEY_WK] ? WK_UNREAD : '', true); return; }
     var w = wkEnsure();
-    if (t.id === 'wkadd') { w.edit = emptyEdit(-1, null); wkTouch(); storeDraft(true); wkRedraw('', false); return; }
+    if (t.id === 'wkadd') { state.wk.allNames = false; w.edit = emptyEdit(-1, null); wkTouch(); storeDraft(true); wkRedraw('', false); return; }
+    if (t.id === 'wkallnames') { state.wk.allNames = true; wkRedraw('', false); return; }     // 032-2 (D263)
     if (t.classList.contains('wkmove')) {
       if (w.edit && editPending(w) && w.edit.i !== Number(t.getAttribute('data-i'))) { wkRedraw('Finish the move you are on first: tap ' + (w.edit.i >= 0 ? 'Done' : 'Add this move') + ', or Cancel.', true); return; }
       var i = Number(t.getAttribute('data-i')), m = w.moves[i];
       if (!m) return;
+      state.wk.allNames = false;     // 032-2
       var ed = emptyEdit(i, m.k);
       ed.name = m.name;
       MOVE_FIELDS.forEach(function (f) { if (typeof m[f] === 'string') ed[f] = m[f]; });
       ed.each = m.each === true;
+      ed.band = typeof m.band === 'string' ? m.band : '';     // 032
       w.edit = ed; wkTouch(); storeDraft(true); wkRedraw('', false);
       return;
     }
@@ -2671,12 +2774,27 @@ function wireWorkout() {
         var mk = moveKind(k);
         MOVE_FIELDS.forEach(function (f) { if (!mk.boxes.some(function (b) { return b[0] === f; })) w.edit[f] = ''; });
         if (!mk.each) w.edit.each = false;
+        if (!mk.band) w.edit.band = '';     // 032
         wkTouch(); storeDraft(true); wkRedraw('', false);
         focusLater('#wkname');
       }
       return;
     }
-    if (t.classList.contains('wkchip')) { w.edit.name = t.getAttribute('data-name'); wkTouch(); storeDraft(true); wkRedraw('', false); return; }
+    if (t.hasAttribute('data-band')) { w.edit.band = t.getAttribute('data-band'); wkTouch(); storeDraft(true); wkRedraw('', false); return; }     // 032
+    if (t.classList.contains('wkchip')) {
+      // A name used before (032, D257, G032-3): its name, its kind and every box from the last time; the other boxes empty.
+      var cm = state.wk.chipMoves && state.wk.chipMoves[Number(t.getAttribute('data-j'))];
+      if (cm && moveKind(cm.k) && nameKey(cm.name) === nameKey(t.getAttribute('data-name'))) {
+        var ne = emptyEdit(w.edit.i, cm.k);
+        ne.name = cleanTyped(cm.name);
+        MOVE_FIELDS.forEach(function (f) { if (typeof cm[f] === 'string') ne[f] = cm[f]; });
+        ne.each = cm.each === true && !!moveKind(cm.k).each;
+        ne.band = moveKind(cm.k).band && typeof cm.band === 'string' ? cm.band : '';
+        w.edit = ne;
+      } else w.edit.name = t.getAttribute('data-name');
+      wkTouch(); storeDraft(true); wkRedraw('', false);
+      return;
+    }
     if (t.id === 'wkeach') { w.edit.each = !w.edit.each; wkTouch(); storeDraft(true); wkRedraw('', false); return; }
     if (t.id === 'wkcancel') { w.edit = null; wkTouch(); storeDraft(true); wkRedraw('', false); return; }
     if (t.id === 'wkoutbtn') {
@@ -2692,6 +2810,7 @@ function wireWorkout() {
     var w = wkOf(state.running);
     if (!w || !w.edit) return;
     if (t.id === 'wkname') w.edit.name = t.value.slice(0, MOVE_NAME_MAX);                                   // cut to the box's length (028-3)
+    else if (t.id === 'wkband') w.edit.band = t.value.slice(0, BAND_MAX);                                   // 032
     else if (t.getAttribute('data-f')) w.edit[t.getAttribute('data-f')] = t.value.slice(0, MOVE_NUM_MAX);
     else return;
     wkTouch();

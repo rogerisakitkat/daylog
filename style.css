@@ -259,13 +259,17 @@ body.wkopen main > :not(#sc-Workout):not(#status):not(#error) { display: none !i
 .wkend { display: block; width: calc(100% - 24px); margin: 16px 12px 0; background: #b85a2e; color: #fff; border: 0; text-align: center; font-weight: 700; font-size: 17px; border-radius: 14px; padding: 14px; }
 .wkedit { margin: 8px 12px 0; background: #fff; border: 2px solid var(--accent); border-radius: 14px; padding: 10px 12px; }
 .wkedit .t { font-weight: 700; margin-bottom: 8px; overflow-wrap: anywhere; }
-.wkkind { display: flex; gap: 6px; margin-bottom: 10px; }
-.wkkind .choice { margin: 0; padding: 8px 6px; font-size: 14px; display: block; text-align: center; flex: 1; }
+.wkkind { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 10px; }
+.wkkind .choice { margin: 0; padding: 8px 6px; font-size: 14px; display: block; text-align: center; }
 .wklbl { font-size: 13px; color: var(--muted); display: block; margin-bottom: 3px; }
 .wkname { width: 100%; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 9px 8px; font: inherit; font-size: 16px; color: var(--ink); margin-bottom: 8px; }
 .wkchips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
 .wkchips .l { font-size: 13px; color: var(--muted); width: 100%; }
 .wkchip { border: 1px solid var(--line); background: #fff; border-radius: 16px; padding: 5px 11px; font-size: 14px; color: var(--ink); max-width: 100%; overflow-wrap: anywhere; text-align: left; }
+.wkchip.on { background: var(--accent-soft); border-color: var(--accent); font-weight: 600; }
+.wkall { border: 1px dashed var(--accent); background: #fff; border-radius: 16px; padding: 5px 11px; font-size: 14px; color: var(--accent); font-weight: 600; }
+.wksub { font-size: 13px; color: var(--muted); display: block; margin: 10px 0 3px; }
+.wkband { width: 100%; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 9px 8px; font: inherit; font-size: 16px; color: var(--ink); margin-bottom: 6px; }
 .wkgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; }
 .wkgrid input { width: 100%; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 9px 8px; font: inherit; font-size: 16px; color: var(--ink); }
 .wkeach { display: inline-flex; gap: 8px; align-items: center; border: 1px solid var(--line); background: #fff; border-radius: 18px; padding: 6px 12px; margin: 10px 0 4px; font-size: 15px; color: var(--ink); }
