@@ -267,6 +267,13 @@ body.wkopen main > :not(#sc-Workout):not(#status):not(#error) { display: none !i
 .wkchips .l { font-size: 13px; color: var(--muted); width: 100%; }
 .wkchip { border: 1px solid var(--line); background: #fff; border-radius: 16px; padding: 5px 11px; font-size: 14px; color: var(--ink); max-width: 100%; overflow-wrap: anywhere; text-align: left; }
 .wkchip.on { background: var(--accent-soft); border-color: var(--accent); font-weight: 600; }
+.wkrun { display: flex; align-items: center; gap: 10px; }
+.wkrun .tx { flex: 1; min-width: 0; }
+.wkrun.paused { background: #fff4d6; border-color: #e7cf8a; }
+.wkpause { flex: none; border: 1px solid var(--accent); background: #fff; color: var(--accent); border-radius: 12px; padding: 9px 14px; font: inherit; font-weight: 700; font-size: 15px; }
+.wkresume { flex: none; border: 0; background: #2e7d4f; color: #fff; border-radius: 12px; padding: 11px 16px; font: inherit; font-weight: 700; font-size: 16px; }
+.wkmove.wkbreak { background: #f3f1ec; }
+.wkmove.wkbreak .mn { color: #6b6457; font-weight: 600; }
 .wkall { border: 1px dashed var(--accent); background: #fff; border-radius: 16px; padding: 5px 11px; font-size: 14px; color: var(--accent); font-weight: 600; }
 .wksub { font-size: 13px; color: var(--muted); display: block; margin: 10px 0 3px; }
 .wkband { width: 100%; background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 9px 8px; font: inherit; font-size: 16px; color: var(--ink); margin-bottom: 6px; }

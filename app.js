@@ -223,7 +223,22 @@
  */
 // 032-2 (Agent AI): a color typed with the word "band" reads once (F1); names used before: the 12 newest, then
 // "Show all N names" (F2, D263); a stored time is used only if it is a real time of day (N6).
-var PAGE_VERSION = '032-2';
+// Increment 033 (2026-11-01, R129, D247, D266 to D271): the Pause button. While a made-up workout runs, the Workout
+// screen's blue box has Pause; paused, the box is yellow ("Paused since 12:53 PM") with Resume. Resume ends the break,
+// kept with the moves in "draft-workout" as breaks [{ i: its place (the moves before it), a: paused at, b: resumed at }]
+// (milliseconds); a break under a minute is not kept (G033-1). It reads in the list ("Break", "12:53 PM to 1:03 PM ·
+// 10 min") and in the Moves column ("12:53 PM Break, 10 min (to 1:03 PM)") in time order; the copy for the app carries
+// breaks [{ from, to, minutes }] (G033-6). Adding a move while paused resumes first (D268); ending while paused ends at the
+// pause, no break kept (D269), on Intraday too unless a time was set with Edit (G033-2); the ended-when box offers the
+// pause time (G033-3); Undo brings back the breaks and the pause (G033-4); taking a move out keeps each break in its
+// place (G033-5); the yellow screen keeps them (G033-7). Walks unchanged (D270). Page 032-2 (the way back) ignores the
+// breaks and the pause: it shows the workout running, and the breaks and the pause are lost at its first store (opening
+// the Workout screen, or typing on Intraday; Agent AJ).
+// 033-2 (Agent AJ): a paused workout, or one with breaks, is not changed to a walk, and a walk never ends at a pause or
+// carries breaks (F1); a pause earlier than the start or later than now is not used as the end (F2); stored times that are
+// not real dates are left out (F3); a move refused at 40 moves does not resume (F4); a 41st break says it is not kept; the
+// pause button and the stale note name the day when it is not today.
+var PAGE_VERSION = '033-2';
 var SCREENS = ['Morning', 'Intraday', 'Evening'];
 var SCORE_ROWS = ['Mind', 'Body', 'Balance'];
 var MORNING_SCORES = [{ label: 'Quality', key: 'Sleep quality' }, { label: 'Amount', key: 'Sleep amount' }];
@@ -572,6 +587,33 @@ var MOVE_FIELDS = ['sets', 'reps', 'lb', 'sec', 'min', 'level', 'speed', 'hm', '
 var WHOLE_FIELDS = { hm: true, hs: true };     // how long (032, G032-5): whole numbers
 var BAND_MAX = 20;                             // band color (032, G032-4)
 var NAMES_FIRST = 12;                          // names used before shown before "Show all" (032-2, D263)
+var BREAKS_MAX = 40;                           // breaks in one workout (033)
+function brMin(br) { return Math.floor(br.b / 60000) - Math.floor(br.a / 60000); }
+var MS_LOW = Date.UTC(2020, 0, 1), MS_HIGH = Date.UTC(2100, 0, 1);      // a stored time that is a real date (033-2, AJ F3)
+function msOk(x) { return isNum(x) && x >= MS_LOW && x <= MS_HIGH; }
+function breakOk(br) { return isObj(br) && isNum(br.i) && br.i >= 0 && br.i === Math.floor(br.i) && msOk(br.a) && msOk(br.b) && br.b > br.a && br.b - br.a <= 48 * 3600000; }
+// The pause as the end of the workout (D269): only if it is no earlier than the start's minute and not later than now (033-2, AJ F2).
+function pauseEnd(run, w) {
+  if (!run || run.kind === 'Walk' || !w || !msOk(w.pausedAt)) return null;
+  if (Math.floor(w.pausedAt / 60000) < Math.floor(run.startAt / 60000) || w.pausedAt > Date.now() + 60000) return null;
+  return w.pausedAt;
+}
+function breaksOk(bs) { return Array.isArray(bs) && bs.length <= BREAKS_MAX && bs.every(breakOk); }
+function hmAt(ms) { return ampm(timeStr(new Date(ms))); }
+// One break as it reads in the Moves column (033, D267): "12:53 PM Break, 10 min (to 1:03 PM)".
+function breakText(br) { return hmAt(br.a) + ' Break, ' + brMin(br) + ' min (to ' + hmAt(br.b) + ')'; }
+// The moves and breaks in time order: each break before the move at its place, or after the last (033).
+function wkLines(ms, bs, mf, bf) {
+  var out = [];
+  bs = bs || [];
+  for (var i = 0; i <= ms.length; i++) {
+    bs.forEach(function (br) { if (Math.min(br.i, ms.length) === i) out.push(bf(br)); });
+    if (i < ms.length) out.push(mf(ms[i], i));
+  }
+  return out;
+}
+function wkText(ms, bs) { return wkLines(ms, bs, moveText, breakText).join('\n'); }
+function breakData(br) { return { from: timeStr(new Date(br.a)), to: timeStr(new Date(br.b)), minutes: brMin(br) }; }
 function hmOk(s) { return isHM(s) && Number(s.slice(0, 2)) < 24 && Number(s.slice(3, 5)) < 60; }     // a move's time (032-2)
 var MOVES_MAX = 40;               // moves in one workout (with names of up to 60, the entry stays well within what the sheet takes)
 var MOVE_NAME_MAX = 60;
@@ -1232,7 +1274,8 @@ function kindOk(k, v) {
   if (k === 'lastSaved') {
     return isObj(v) && isDay(v.date) && isHM(v.time) && typeof v.summary === 'string' && noneOr(v.until, isNum) && noneOr(v.fixUntil, isNum) &&
            noneOr(v.savedDate, isDay) && noneOr(v.savedTime, isHM) && optStr(v.id) && optBool(v.undone) &&
-           noneOr(v.ended, function (e) { return isObj(e) && isNum(e.version) && runningOk(e.before) && noneOr(e.moves, function (ms) { return Array.isArray(ms) && ms.every(moveOk); }); });
+           noneOr(v.ended, function (e) { return isObj(e) && isNum(e.version) && runningOk(e.before) && noneOr(e.moves, function (ms) { return Array.isArray(ms) && ms.every(moveOk); }) &&
+                                                     noneOr(e.breaks, breaksOk) && noneOr(e.pausedAt, msOk) && noneOr(e.pausedI, isNum); });
   }
   if (k === 'draft') {
     return isObj(v) && scoresOk(v.scores, SCORE_ROWS) && fixedOk(v.fixed) && optStr(v.comments) && optStr(v.why) &&
@@ -1526,6 +1569,10 @@ function payloadFor(entry) {
              fields: entry.fields, app: { page: PAGE_VERSION, screen: (entry.fields && entry.fields['Screen']) || 'Intraday',
                                           usuals: state.usualsFrom || 'not read', fields: entry.fields } };
   addMoves(pl, entry.moves);        // 028 (G028-8)
+  if (Array.isArray(entry.breaks) && entry.breaks.length) {     // 033 (G033-6)
+    pl.app.breaks = entry.breaks.map(breakData);
+    if (JSON.stringify(pl.app).length > 40000) delete pl.app.breaks;
+  }
   return pl;
 }
 
@@ -1638,19 +1685,26 @@ function save() {
                      startDate: dr.fixed.date, startTime: dr.fixed.time };
     }
   }
-  var endMoves = null;              // the moves saved with the end (028, G028-2)
+  var endMoves = null, endBreaks = null;              // the moves (028, G028-2) and breaks (033) saved with the end
   if (endHow) {
     var ef = clone(run.fields);
-    ef['Workout ended'] = endHow.unknown ? END_NOT_KNOWN : (endHow.atTop ? dr.fixed.time : endHow.time);
     var wkn = wkOf(run);
-    if (wkn && wkn.moves.length) { endMoves = clone(wkn.moves); ef['Moves'] = movesText(endMoves); }
+    // Ended on Intraday while paused: at the pause, unless a time was set with Edit (033, G033-2).
+    var pzEnd = pauseEnd(run, wkn);
+    var atPause = !!(endHow.atTop && pzEnd !== null && !dr.edited);
+    var topEnd = atPause ? timeStr(new Date(pzEnd)) : dr.fixed.time;
+    ef['Workout ended'] = endHow.unknown ? END_NOT_KNOWN : (endHow.atTop ? topEnd : endHow.time);
+    if (run.kind !== 'Walk' && wkn && wkn.breaks && wkn.breaks.length) endBreaks = clone(wkn.breaks);      // never on a walk (033-2, AJ F1)
+    if (wkn && wkn.moves.length) endMoves = clone(wkn.moves);
+    if (endMoves || endBreaks) ef['Moves'] = wkText(endMoves || [], endBreaks || []);
     ef['Saved at'] = stampOf(now);
     endV = { key: run.id + ':' + (run.version + 1), id: run.id, version: run.version + 1, state: 'current', test: run.test, fields: ef, seq: nextSeq() };
     if (endMoves) endV.moves = endMoves;
+    if (endBreaks) endV.breaks = endBreaks;
     endOut = { key: endV.key, seq: endV.seq, status: 'waiting', payload: payloadFor(endV) };
     var rk = runName(run.kind), mv = endMoves ? ', ' + movesCount(endMoves.length) : '';
     if (endHow.atTop) {
-      bits.push(rk + ' ended (' + whenOf(run.startDate, run.startTime, dr.fixed.date) + ' to ' + ampm(dr.fixed.time) + ')' + mv);
+      bits.push(rk + ' ended (' + whenOf(run.startDate, run.startTime, dr.fixed.date) + ' to ' + ampm(topEnd) + ')' + mv);
     } else if (endHow.unknown) {
       bits.push(rk + ' from ' + whenOf(run.startDate, run.startTime, dateStr(now)) + ' ended, end time not known' + mv);
     } else {
@@ -1664,6 +1718,8 @@ function save() {
               started: !!(entry && newRunning && newRunning.id === entry.id),
               ended: endHow ? { id: run.id, version: endV.version, before: run } : null };
   if (endMoves) bar.ended.moves = endMoves;
+  if (endBreaks) bar.ended.breaks = endBreaks;                                                               // 033 (G033-4)
+  if (endHow && run.kind !== 'Walk' && wkn && msOk(wkn.pausedAt)) { bar.ended.pausedAt = wkn.pausedAt; bar.ended.pausedI = wkn.pausedI; }
   if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
   var saved = dr, runBefore = run;
   // The moves go with the end (028): written out of storage in the same step, compared first.
@@ -1805,6 +1861,12 @@ function undo() {
       restored.fields = rf;
       // The workout runs again with its moves (028, G028-5).
       if (Array.isArray(bar.ended.moves) && bar.ended.moves.length) wkBack = { id: b.id, moves: clone(bar.ended.moves), edit: null };
+      // ... with its breaks, and paused again if it ended paused (033, G033-4).
+      if ((Array.isArray(bar.ended.breaks) && bar.ended.breaks.length) || msOk(bar.ended.pausedAt)) {
+        if (!wkBack) wkBack = { id: b.id, moves: [], edit: null };
+        if (Array.isArray(bar.ended.breaks) && bar.ended.breaks.length) wkBack.breaks = clone(bar.ended.breaks);
+        if (msOk(bar.ended.pausedAt)) { wkBack.pausedAt = bar.ended.pausedAt; wkBack.pausedI = isNum(bar.ended.pausedI) ? bar.ended.pausedI : wkBack.moves.length; }
+      }
     }
     // A workout started by this Save and undone: moves typed for it meanwhile go with it (028).
     var wkDrop = !!(bar.started && state.wkd && state.wkd.id === bar.id);
@@ -2298,6 +2360,11 @@ function saveFix() {
       var wrote = {};
       // The moves recorded with this entry go with the new version, as its Moves column does (028, G028-7).
       if (Array.isArray(extra.base.moves) && extra.base.moves.length) { entry.moves = extra.base.moves; addMoves(out.payload, entry.moves); }
+      if (Array.isArray(extra.base.breaks) && extra.base.breaks.length) {     // 033 (G033-7)
+        entry.breaks = extra.base.breaks;
+        out.payload.app.breaks = entry.breaks.map(breakData);
+        if (JSON.stringify(out.payload.app).length > 40000) delete out.payload.app.breaks;
+      }
       s.entries.put(entry);
       s.outbox.put(out);
       if (isRun) { s.kv.put(newRunning, 'running'); wrote.running = newRunning; }
@@ -2400,7 +2467,12 @@ function normWk(v) {
   var ed = v.edit && editOk(v.edit) ? normEdit(v.edit) : null;
   // A change to a move, when a move was left out: its place may no longer be that move's, so it is not kept (028-4; Agent AE, R4).
   if (ed && ed.i >= 0 && (ms.length !== all.length || ed.i >= ms.length)) ed = null;
-  return { id: v.id, moves: ms.map(normMove), edit: ed };
+  var o = { id: v.id, moves: ms.map(normMove), edit: ed };
+  // Breaks and a pause (033): kept when they read right, each place no further than the moves kept.
+  var bs = Array.isArray(v.breaks) ? v.breaks.filter(breakOk).slice(0, BREAKS_MAX) : [];
+  if (bs.length) o.breaks = bs.map(function (br) { return { i: Math.min(br.i, o.moves.length), a: br.a, b: br.b }; });
+  if (msOk(v.pausedAt)) { o.pausedAt = v.pausedAt; o.pausedI = isNum(v.pausedI) && v.pausedI >= 0 ? Math.min(Math.floor(v.pausedI), o.moves.length) : o.moves.length; }
+  return o;
 }
 // How long (032, G032-5): "1 min 30 sec", "45 sec", "2 min"; nothing typed, nothing; both 0, "0 sec".
 function howLongText(m) {
@@ -2482,6 +2554,11 @@ function fixHasMoves() {
   if (typeof fx.orig['Moves'] === 'string' && /\S/.test(fx.orig['Moves'])) return true;
   var r = state.running;
   return !!(r && r.id === fx.id && wkOf(r) && (wkOf(r).moves.length || editPending(wkOf(r))));     // a half-typed one too (028-4)
+}
+// A workout running with breaks or paused (033-2, AJ F1): not changed to a walk either.
+function fixHasBreaks() {
+  var fx = state.fix, r = state.running;
+  return !!(fx && r && r.id === fx.id && wkOf(r) && ((wkOf(r).breaks || []).length || isNum(wkOf(r).pausedAt)));
 }
 function wkCanEdit() {
   var r = state.running;
@@ -2598,21 +2675,38 @@ function renderWorkout() {
   var back = add(bar, 'button', 'muback', '‹ Intraday');
   back.type = 'button'; back.id = 'wkback';
   add(bar, 'span', 'muttl', 'Workout · ' + r.kind).id = 'wkttl';
-  var run = add(sc, 'div', 'wkrun');
-  add(run, 'b', '', 'Running since ' + whenOf(r.startDate, r.startTime, dateStr(new Date())));
-  add(run, 'span', '', 'Add each move as you do it, or all at the end.');
+  // Pause and Resume in the box at the top (033, D267).
+  var wp = !!(w && isNum(w.pausedAt));
+  var run = add(sc, 'div', 'wkrun' + (wp ? ' paused' : ''));
+  var rtx = add(run, 'div', 'tx');
+  if (wp) {
+    add(rtx, 'b', '', 'Paused since ' + whenOf(dateStr(new Date(w.pausedAt)), timeStr(new Date(w.pausedAt)), dateStr(new Date())));
+    add(rtx, 'span', '', 'Tap Resume when you start again.');
+  } else {
+    add(rtx, 'b', '', 'Running since ' + whenOf(r.startDate, r.startTime, dateStr(new Date())));
+    var nbk = w && w.breaks ? w.breaks.length : 0, mbk = 0;
+    if (nbk) w.breaks.forEach(function (br) { mbk += brMin(br); });
+    add(rtx, 'span', '', nbk ? nbk + (nbk === 1 ? ' break' : ' breaks') + ' so far (' + mbk + ' min). Add each move as you do it.' : 'Add each move as you do it, or all at the end.');
+  }
+  var pbtn = add(run, 'button', wp ? 'wkresume' : 'wkpause', wp ? 'Resume' : 'Pause');
+  pbtn.type = 'button'; pbtn.id = wp ? 'wkresumebtn' : 'wkpausebtn';
   if (state.wk.note) { var n = add(sc, 'div', 'munote' + (state.wk.bad ? ' bad' : ''), state.wk.note); n.id = 'wknote'; }
   add(sc, 'h3', '', 'Moves');
   var box = add(sc, 'div', 'wkmoves');
   box.id = 'wkmoves';
-  if (!moves.length) add(box, 'div', 'wknone', 'No moves yet.');
-  moves.forEach(function (m, i) {
+  var wbs = w && w.breaks ? w.breaks : [];
+  if (!moves.length && !wbs.length) add(box, 'div', 'wknone', 'No moves yet.');
+  wkLines(moves, wbs, function (m, i) {
     var b = add(box, 'button', 'wkmove' + (ed && ed.i === i ? ' on' : ''));
     b.type = 'button'; b.setAttribute('data-i', String(i));
     add(b, 'div', 'mn', m.name);
     var p = moveParts(m);
     if (hmOk(m.t)) p.unshift(ampm(m.t));     // 032 (D260)
     if (p.length) add(b, 'div', 'md', p.join(' · '));
+  }, function (br) {                         // a break, in its place (033)
+    var k = add(box, 'div', 'wkmove wkbreak');
+    add(k, 'div', 'mn', 'Break');
+    add(k, 'div', 'md', hmAt(br.a) + ' to ' + hmAt(br.b) + ' · ' + brMin(br) + ' min');
   });
   if (ed) drawWkEdit(sc, add, ed, moves);
   else if (moves.length < MOVES_MAX) {
@@ -2730,6 +2824,7 @@ function wkCommit() {
     if (band.length > BAND_MAX) { wkRedraw('Band color: up to ' + BAND_MAX + ' letters.', true); focusLater('#wkband'); return; }
     if (band) m.band = band;
   }
+  if (!(ed.i >= 0 && ed.i < w.moves.length) && w.moves.length < MOVES_MAX && isNum(w.pausedAt)) wkResume(w, new Date());     // adding a move resumes (033, D268; not if refused, 033-2)
   // The time it was added (032, G032-6): the phone's clock at Add this move; a move changed keeps its time.
   if (ed.i >= 0 && ed.i < w.moves.length) { if (hmOk(w.moves[ed.i].t)) m.t = w.moves[ed.i].t; }
   else m.t = timeStr(new Date());     // always a real time of day
@@ -2741,6 +2836,25 @@ function wkCommit() {
   storeDraft(true);
   wkRedraw('', false);
 }
+// Pause and Resume (033): the pause is kept with the moves; a break under a minute is not kept (G033-1).
+function wkPause(w) {
+  if (isNum(w.pausedAt)) return;
+  w.pausedAt = Date.now();
+  w.pausedI = w.moves.length;
+  wkTouch(); storeDraft(true); wkRedraw('', false);
+  shieldTaps(TAP_SHIELD_MS);
+}
+function wkResume(w, now) {
+  if (!isNum(w.pausedAt)) return;
+  var br = { i: Math.min(isNum(w.pausedI) ? w.pausedI : w.moves.length, w.moves.length), a: w.pausedAt, b: now.getTime() };
+  var res = '';
+  if (brMin(br) >= 1 && breakOk(br)) {
+    if ((w.breaks || []).length < BREAKS_MAX) { w.breaks = (w.breaks || []).concat([br]); res = 'kept'; } else res = 'full';
+  }
+  delete w.pausedAt;
+  delete w.pausedI;
+  return res;
+}
 function focusLater(sel) { setTimeout(function () { var f = document.querySelector(sel); if (f) { try { f.focus(); } catch (x) { /* ignore */ } } }, 0); }
 function wireWorkout() {
   var sc = el('sc-Workout');
@@ -2751,6 +2865,14 @@ function wireWorkout() {
     if (t.id === 'wkendbtn') { endWorkout(); return; }
     if (!wkCanEdit()) { wkRedraw(state.unread[KEY_WK] ? WK_UNREAD : '', true); return; }
     var w = wkEnsure();
+    if (t.id === 'wkpausebtn') { wkPause(w); return; }                                                     // 033
+    if (t.id === 'wkresumebtn') {
+      var rr = wkResume(w, new Date());
+      wkTouch(); storeDraft(true);
+      wkRedraw(rr === 'full' ? 'A workout can hold up to ' + BREAKS_MAX + ' breaks; this one is not kept.' : '', rr === 'full');
+      shieldTaps(TAP_SHIELD_MS);
+      return;
+    }
     if (t.id === 'wkadd') { state.wk.allNames = false; w.edit = emptyEdit(-1, null); wkTouch(); storeDraft(true); wkRedraw('', false); return; }
     if (t.id === 'wkallnames') { state.wk.allNames = true; wkRedraw('', false); return; }     // 032-2 (D263)
     if (t.classList.contains('wkmove')) {
@@ -2798,7 +2920,12 @@ function wireWorkout() {
     if (t.id === 'wkeach') { w.edit.each = !w.edit.each; wkTouch(); storeDraft(true); wkRedraw('', false); return; }
     if (t.id === 'wkcancel') { w.edit = null; wkTouch(); storeDraft(true); wkRedraw('', false); return; }
     if (t.id === 'wkoutbtn') {
-      if (w.edit.i >= 0 && w.edit.i < w.moves.length) w.moves.splice(w.edit.i, 1);
+      if (w.edit.i >= 0 && w.edit.i < w.moves.length) {
+        var gone = w.edit.i;
+        w.moves.splice(gone, 1);
+        (w.breaks || []).forEach(function (br) { if (br.i > gone) br.i--; });       // each break stays in its place (033, G033-5)
+        if (isNum(w.pausedAt) && isNum(w.pausedI) && w.pausedI > gone) w.pausedI--;
+      }
       w.edit = null; wkTouch(); storeDraft(true); wkRedraw('', false);
       return;
     }
@@ -2835,10 +2962,12 @@ function endWorkout() {
   }
   var now = new Date();
   // Begun on a day that is now over: asked once more, since its end is the moment of the tap (028-3; Agent AE, N6).
+  var pzE = pauseEnd(run, w);
+  var endD = pzE !== null ? new Date(pzE) : now;     // ended while paused: at the pause (033, D269; a usable pause only, 033-2)
   if (isStale() && state.wk && state.wk.staleOk !== run.id) {
     state.wk.staleOk = run.id;
-    wkRedraw('This workout started ' + whenOf(run.startDate, run.startTime, dateStr(now)) + '. Tap End workout again to end it now, at ' +
-             ampm(timeStr(now)) + ', or go back to Intraday and set when it ended in the box at the top.', true);
+    wkRedraw('This workout started ' + whenOf(run.startDate, run.startTime, dateStr(now)) + '. Tap End workout again to end it ' +
+             (endD === now ? 'now, at ' + ampm(timeStr(endD)) : 'at the pause, ' + whenOf(dateStr(endD), timeStr(endD), dateStr(now))) + ', or go back to Intraday and set when it ended in the box at the top.', true);
     return;
   }
   if (Math.floor(now.getTime() / 60000) * 60000 < Math.floor(run.startAt / 60000) * 60000) {
@@ -2847,19 +2976,23 @@ function endWorkout() {
     return;
   }
   var moves = w ? clone(w.moves) : [];
+  var breaks = w && w.breaks ? clone(w.breaks) : [];
   var ef = clone(run.fields);
-  ef['Workout ended'] = timeStr(now);
-  if (moves.length) ef['Moves'] = movesText(moves);
+  ef['Workout ended'] = timeStr(endD);
+  if (moves.length || breaks.length) ef['Moves'] = wkText(moves, breaks);
   ef['Saved at'] = stampOf(now);
   var endV = { key: run.id + ':' + (run.version + 1), id: run.id, version: run.version + 1, state: 'current', test: run.test, fields: ef, seq: nextSeq() };
   if (moves.length) endV.moves = moves;
+  if (breaks.length) endV.breaks = breaks;
   var endOut = { key: endV.key, seq: endV.seq, status: 'waiting', payload: payloadFor(endV) };
   var bar = { id: null, date: dateStr(now), time: timeStr(now), undone: false, test: run.test, screen: 'Intraday',
-              summary: runName(run.kind) + ' ended (' + whenOf(run.startDate, run.startTime, dateStr(now)) + ' to ' + ampm(timeStr(now)) + ')' +
+              summary: runName(run.kind) + ' ended (' + whenOf(run.startDate, run.startTime, dateStr(now)) + ' to ' + ampm(timeStr(endD)) + ')' +
                        (moves.length ? ', ' + movesCount(moves.length) : ', no moves'),
               savedDate: dateStr(now), savedTime: timeStr(now), until: nextDayStart(now).getTime(), started: false,
               ended: { id: run.id, version: endV.version, before: run } };
   if (moves.length) bar.ended.moves = moves;
+  if (breaks.length) bar.ended.breaks = breaks;                                         // 033 (G033-4)
+  if (w && msOk(w.pausedAt)) { bar.ended.pausedAt = w.pausedAt; bar.ended.pausedI = w.pausedI; }
   if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
   var gen0 = { running: state.gen.running, wk: state.gen[KEY_WK] };
   var ed0 = state.edits[KEY_WK] || 0;
@@ -4649,9 +4782,14 @@ function renderIntraday() {
     var r = state.running;
     rl.hidden = false;
     var mn = wkOf(r) ? wkOf(r).moves.length : 0;
+    var pz = r.kind !== 'Walk' && wkOf(r) && msOk(wkOf(r).pausedAt) ? wkOf(r).pausedAt : null;     // paused (033)
+    var pzE2 = pauseEnd(r, wkOf(r));
     rt.textContent = dr.endTick
-      ? (r.kind === 'Walk' ? 'The walk' : 'The workout') + ' ends at the time at the top when you tap Save' + (mn ? ', with its ' + movesCount(mn) : '') + '.'
+      ? (pzE2 !== null && !dr.edited ? 'The workout ends at ' + hmAt(pzE2) + ', when you paused, when you tap Save'
+                          : (r.kind === 'Walk' ? 'The walk' : 'The workout') + ' ends at the time at the top when you tap Save') + (mn ? ', with its ' + movesCount(mn) : '') + '.'
       : r.kind === 'Walk' ? 'Walk started ' + whenOf(r.startDate, r.startTime, dateStr(new Date())) + '. Tap End walk when you finish.'
+      : pz ? runName(r.kind) + ' paused since ' + whenOf(dateStr(new Date(pz)), timeStr(new Date(pz)), dateStr(new Date())) + (mn ? ', ' + movesCount(mn) + ' so far' : '') +
+             '. Tap Open to resume or end it.'
       : runName(r.kind) + ' started ' + whenOf(r.startDate, r.startTime, dateStr(new Date())) + (mn ? ', ' + movesCount(mn) + ' so far' : '') +
         '. Tap Open to add your moves; End workout when you finish.';
   } else if (state.running) {
@@ -4746,7 +4884,18 @@ function renderEndBox() {
   if (!on) return;
   var r = state.running, dr = cur();
   var what = r.kind === 'Walk' ? 'Your walk' : (r.kind === MADE_UP ? 'Your workout' : 'Your workout (' + r.kind + ')');
-  el('endqtext').textContent = what + ' from ' + whenOf(r.startDate, r.startTime, dateStr(new Date())) + ' is still running. When did it end?';
+  var pz = r.kind !== 'Walk' && wkOf(r) && msOk(wkOf(r).pausedAt) ? wkOf(r).pausedAt : null;     // 033 (G033-3)
+  var pzOk = pauseEnd(r, wkOf(r));                                                                  // offered only if usable (033-2)
+  el('endqtext').textContent = what + ' from ' + whenOf(r.startDate, r.startTime, dateStr(new Date())) +
+    (pz ? ' is paused since ' + whenOf(dateStr(new Date(pz)), timeStr(new Date(pz)), dateStr(new Date())) + '. When did it end?' : ' is still running. When did it end?');
+  var pb = el('endpaused');
+  pb.hidden = pzOk === null;
+  if (pzOk !== null) {
+    var pOn = !!(endAnswered(dr) && dr.endAns.time === timeStr(new Date(pz)) && dr.endAns.date === dateStr(new Date(pz)));
+    pb.textContent = 'At the pause, ' + whenOf(dateStr(new Date(pz)), timeStr(new Date(pz)), dateStr(new Date()));
+    pb.classList.toggle('on', pOn);
+    pb.setAttribute('aria-pressed', pOn ? 'true' : 'false');
+  }
   var a = endAnswered(dr) ? dr.endAns : null;
   setTimeButton(el('endset'), a && a.time ? a.time : null);
   if (a && a.time && a.date && a.date !== r.startDate) el('endset').textContent = weekday(a.date) + ' ' + usDate(a.date) + ' ' + ampm(a.time);
@@ -4876,6 +5025,7 @@ function buildButtons() {
       var kind = b.getAttribute('data-name');
       if (!kind) return;
       if (kind === 'Walk' && fixOn('Intraday') && fixHasMoves()) { showNote('This workout has moves, so it can’t be changed to a walk.'); return; }     // 028-3 (Agent AE, N5)
+      if (kind === 'Walk' && fixOn('Intraday') && fixHasBreaks()) { showNote('This workout has breaks, so it can’t be changed to a walk.'); return; }     // 033-2 (AJ F1)
       touch();
       if (!idr().workout) idr().workout = { kind: null };
       idr().workout.kind = kind;
@@ -5123,6 +5273,20 @@ function buildMorningEvening() {
     state.interacted = true;
     state.fix.dr.newEnd = { unknown: true };        // sets "not known"; a time is given again by typing it (G021-4)
     clearFixLine();                                   // 021-3
+    closeTpad();
+    storeDraft(true);
+    render();
+  });
+  el('endpaused').addEventListener('click', function () {        // the pause time as the end (033, G033-3)
+    var r = state.running, w = r && wkOf(r);
+    if (!r || !w || pauseEnd(r, w) === null) return;
+    var pd = new Date(w.pausedAt);
+    var em = endMoment(r, timeStr(pd), new Date());
+    if (!em.ok) { showError(em.msg); return; }
+    touch();
+    var dr = cur();
+    dr.endAns = { forId: r.id, unknown: false, time: em.time, date: em.date };
+    if (state.screen === 'Intraday') dr.endTick = false;
     closeTpad();
     storeDraft(true);
     render();
