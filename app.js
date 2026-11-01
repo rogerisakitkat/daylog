@@ -238,7 +238,17 @@
 // carries breaks (F1); a pause earlier than the start or later than now is not used as the end (F2); stored times that are
 // not real dates are left out (F3); a move refused at 40 moves does not resume (F4); a 41st break says it is not kept; the
 // pause button and the stale note name the day when it is not today.
-var PAGE_VERSION = '033-2';
+// Increment 034 (2026-11-01, R128, G39, G42, D275 to D281): entering a routine in My usual ones. A third part, Workout
+// routines, under Shakes and Medicine; New routine: a name, the 5 newest made-up workouts to start from (D277), the moves in
+// order with their kinds (D276, D278), + Add a move (names used before, the four kinds, no numbers; G034-3), Save routine;
+// Change and Stop using (G034-5). Kept in kv "routines" (pages before 034 never read it) and sent to the Usual ones tab
+// as Kind "Workout routine" (G034-6). "Change my usual ones" under Workout's choices (G034-7). Routines are not offered
+// under Workout until 035 (G034-8).
+// 034-2 (Agent AK): routines read again when another open copy changes things (F1); a past workout fills in the moves
+// only while nothing would be lost, and not while a move is half-typed (F2); a 101st routine says so (F3); the 5 newest
+// past workouts with moves (F4); no routine called Walk, Made up as I go or Make it up as I go; damaged routines get their
+// own line; one ID twice, or a name of only spaces, is damage.
+var PAGE_VERSION = '034-2';
 var SCREENS = ['Morning', 'Intraday', 'Evening'];
 var SCORE_ROWS = ['Mind', 'Body', 'Balance'];
 var MORNING_SCORES = [{ label: 'Quality', key: 'Sleep quality' }, { label: 'Amount', key: 'Sleep amount' }];
@@ -1308,7 +1318,7 @@ function kindOk(k, v) {
 // this page's own still waiting to be written goes first, compared as always.
 function catchUp() {
   if (!state.loaded || state.noStorage) return Promise.resolve();
-  return catchUpUsuals().then(catchUpKept);
+  return catchUpUsuals().then(catchUpRoutines).then(catchUpKept);     // routines too (034-2, AK F1)
 }
 // Another open copy may have changed the usual ones (025): taken before the half-filled screens, so a pick renamed
 // there is found under its new name.
@@ -3726,6 +3736,7 @@ function openUsuals(kind) {
   state.mu = { view: 'list', from: kind, note: '', bad: false, rev: muRev() };
   render();
   window.scrollTo(0, 0);
+  loadRoutines().then(function () { if (state.mu && state.mu.view === 'list') muRedraw(null); });     // 034
 }
 function closeUsuals() {
   var from = state.mu ? state.mu.from : null;
@@ -3766,7 +3777,9 @@ function renderUsuals() {
   var bar = add(sc, 'div', 'mubar');
   var back = add(bar, 'button', 'muback', m.view === 'list' ? '‹ Back' : '‹ My usual ones');
   back.type = 'button'; back.id = 'muback';
-  var ttl = m.view === 'list' ? 'My usual ones' : (m.id ? 'Change ' + m.origName : (m.kind === 'Shake' ? 'New shake' : 'New medicine set'));
+  var ttl = m.view === 'list' ? 'My usual ones' : m.view === 'redit' ? (m.id ? 'Change ' + m.origName : 'New routine') :
+            (m.id ? 'Change ' + m.origName : (m.kind === 'Shake' ? 'New shake' : 'New medicine set'));
+  if (m.view === 'redit') locked = routinesLocked();     // 034: the usual ones' state does not stop routines
   add(bar, 'span', 'muttl', ttl).id = 'muttl';
   if (m.note) { var n = add(sc, 'div', 'munote' + (m.bad ? ' bad' : ''), m.note); n.id = 'munote'; }
   if (locked) { var l = add(sc, 'div', 'munote bad', locked); l.id = 'mulocked'; }
@@ -3791,9 +3804,28 @@ function renderUsuals() {
         a.type = 'button'; a.setAttribute('data-kind', kind); a.id = 'muadd-' + kind;
       }
     });
+    // Workout routines (034, G39, D279)
+    add(sc, 'h3', '', 'Workout routines');
+    var rl = routinesLocked();
+    if (rl) { var rlx = add(sc, 'div', state.rt ? 'munote bad' : 'ucard none', rl); rlx.id = 'murtlocked'; }
+    else {
+      if (!state.rt.value.list.length) add(sc, 'div', 'ucard none', 'No routines yet.');
+      state.rt.value.list.forEach(function (r) {
+        var card = add(sc, 'div', 'ucard');
+        card.setAttribute('data-id', r.id);
+        var t = add(card, 'div', '');
+        add(t, 'div', 'un', r.name);
+        add(t, 'div', 'uc', movesCount(r.moves.length) + ': ' + r.moves.map(function (x) { return x.name; }).join(', '));
+        var c = add(card, 'button', 'btn murchg', 'Change');
+        c.type = 'button'; c.setAttribute('data-id', r.id);
+      });
+      var ar0 = add(sc, 'button', 'muadd', '+ Add a routine');
+      ar0.type = 'button'; ar0.id = 'muadd-Routine';
+    }
     add(sc, 'div', 'hint', 'A change counts from now on. Entries already saved keep what they recorded.').style.marginTop = '12px';
     return;
   }
+  if (m.view === 'redit') { drawRoutineEdit(sc, add, m, locked); return; }     // 034
   // Change or New
   var kind = m.kind;
   add(sc, 'h3', '').appendChild(document.createTextNode('Name'));
@@ -3874,6 +3906,9 @@ function wireUsuals() {
     if (!t || !m) return;
     if (t.id === 'muback') { if (m.view === 'list') closeUsuals(); else { muList(''); render(); window.scrollTo(0, 0); } return; }
     if (t.id === 'mucancel') { muList(''); render(); window.scrollTo(0, 0); return; }
+    if (m.view === 'list' && t.classList.contains('murchg')) { openRoutineEdit(t.getAttribute('data-id')); return; }     // 034
+    if (m.view === 'list' && t.id === 'muadd-Routine') { openRoutineEdit(null); return; }
+    if (m.view === 'redit') { routineTap(t); return; }
     if (m.view === 'list') {
       if (usualsLocked()) return;
       if (t.classList.contains('muchg')) { openUsualEdit(t.getAttribute('data-kind'), t.getAttribute('data-id')); return; }
@@ -3901,7 +3936,13 @@ function wireUsuals() {
   });
   sc.addEventListener('input', function (e) {
     var t = e.target, m = state.mu;
-    if (!t || !m || m.view !== 'edit') return;
+    if (!t || !m) return;
+    if (m.view === 'redit') {                                                          // 034
+      if (t.id === 'murname') m.name = t.value;
+      else if (t.id === 'murmname' && m.box && m.box.mode === 'add') m.box.name = t.value;
+      return;
+    }
+    if (m.view !== 'edit') return;
     if (t.id === 'muname') { m.name = t.value; return; }
     var row = t.closest ? t.closest('.murow') : null;
     if (!row) return;
@@ -4078,6 +4119,403 @@ function afterUsualsChanged(byOther) {
   render();
 }
 
+// ------------------------------------------------------------------ workout routines (034)
+
+// His routines (R128, D276 to D280): kv "routines" { list: [r], removed: [r] }, r = { id, version, name, moves: [{ k, name }],
+// savedAt }. A key of its own, so pages before 034 never read or rewrite it. A routine keeps each move's name and kind only
+// (D276); its moves keep the order added (D278). Sent to the Usual ones tab as Kind "Workout routine", Contents one move per
+// line ("Clamshells, PT"), at each version, like the usual ones (G034-6).
+var ROUTINES_MAX = 100;
+var ROUTINE_ID = /^routine-[a-z0-9]{12}$/;
+var OTHER_COPY_ROUTINES = 'Your routines were changed in another open copy of the day log just now, so this shows the latest. ' +
+                          'If a change of yours is missing, make it again. ' + CLOSE_OTHER;
+var ROUTINES_UNREAD = 'Your routines could not be read on this phone just now, so they can’t be shown or changed. Close the page and open it again; if this stays, tell Claude.';
+function routineOk(r) {
+  return isObj(r) && typeof r.id === 'string' && ROUTINE_ID.test(r.id) && isNum(r.version) && r.version === Math.floor(r.version) &&
+         r.version >= 1 && r.version <= USUAL_VERSION_MAX && typeof r.name === 'string' && r.name.length >= 1 && r.name.length <= USUAL_NAME_TYPED_MAX + 20 &&
+         Array.isArray(r.moves) && r.moves.length >= 1 && r.moves.length <= MOVES_MAX &&
+         r.moves.every(function (m) { return isObj(m) && moveKind(m.k) !== null && typeof m.name === 'string' && m.name.length >= 1 && m.name.length <= MOVE_NAME_MAX + 20; }) &&
+         noneOr(r.savedAt, function (x) { return typeof x === 'string'; });
+}
+function routinesOk(v) {
+  if (!(isObj(v) && Array.isArray(v.list) && v.list.length <= ROUTINES_MAX && v.list.every(routineOk) &&
+        noneOr(v.removed, function (rm) { return Array.isArray(rm) && rm.length <= REMOVED_MAX && rm.every(routineOk); }))) return false;
+  var ids = {};                                                     // one ID once, a name with something in it (034-2)
+  return v.list.every(function (r) { if (ids[r.id] || !cleanTyped(r.name)) return false; ids[r.id] = true; return true; });
+}
+function routineText(r) { return r.moves.map(function (m) { return m.name + ', ' + moveKind(m.k).name; }).join('\n'); }
+// Another open copy may have changed the routines (034-2, AK F1): read again; an open list is drawn again, and a routine
+// being changed goes back to the list, saying so (as the usual ones do).
+function catchUpRoutines() {
+  if (!state.rt || muBusy || state.noStorage) return Promise.resolve();
+  return DL.get('kv', 'routines').then(function (v) {
+    if (muBusy || !state.rt || stable(v) === state.rt.known) return;
+    var ok = v === undefined || routinesOk(v);
+    state.rt = { read: true, ok: ok, value: v === undefined ? { list: [], removed: [] } : (ok ? clone(v) : null), known: stable(v) };
+    if (state.mu && state.mu.view === 'redit') { muList(OTHER_COPY_ROUTINES, true); render(); window.scrollTo(0, 0); }
+    else if (state.mu && state.mu.view === 'list') muRedraw(null);
+  }, function () { /* read again next time */ });
+}
+function loadRoutines() {
+  return DL.get('kv', 'routines').then(function (v) {
+    var ok = v === undefined || routinesOk(v);
+    state.rt = { read: true, ok: ok, value: v === undefined ? { list: [], removed: [] } : (ok ? clone(v) : null), known: stable(v) };
+  }, function () { state.rt = { read: false, ok: false, value: null, known: null }; });
+}
+function routinesLocked() {
+  if (state.noStorage) return 'This phone’s storage could not be opened, so your routines can’t be changed just now. Close the page and open it again; if it keeps happening, tell Claude.';
+  if (!state.rt) return 'Reading your routines…';
+  if (!state.rt.read) return ROUTINES_UNREAD;
+  if (!state.rt.ok) return 'The routines stored on this phone cannot be read, so they can’t be shown or changed here. Tell Claude.';     // 034-2
+  return '';
+}
+function newRoutineId(v) {
+  var used = {};
+  v.list.concat(Array.isArray(v.removed) ? v.removed : []).forEach(function (r) { used[r.id] = true; });
+  var id;
+  do {
+    var s = '';
+    for (var i = 0; i < 12; i++) s += 'abcdefghijklmnopqrstuvwxyz0123456789'.charAt(Math.floor(Math.random() * 36));
+    id = 'routine-' + s;
+  } while (used[id]);
+  return id;
+}
+function openRoutineEdit(id) {
+  if (routinesLocked()) return;
+  var r = id ? state.rt.value.list.filter(function (x) { return x.id === id; })[0] : null;
+  if (id && !r) return;
+  state.mu = { view: 'redit', from: state.mu ? state.mu.from : 'Workout', id: r ? r.id : null, base: r ? r.version : 0,
+               origName: r ? r.name : '', origMoves: r ? clone(r.moves) : [], name: r ? r.name : '', moves: r ? clone(r.moves) : [],
+               past: null, names: null, pastOn: null, box: null, allNames: false, ask: false, note: '', bad: false, rev: muRev() };
+  render();
+  window.scrollTo(0, 0);
+  loadRoutineHelp();
+}
+// Names used before (every kind, newest first, as on the Workout screen) and the 5 newest made-up workouts with moves
+// (D277); a copied move takes the kind its name was last used with (G034-1).
+function loadRoutineHelp() {
+  newestEntries().then(function (newest) {
+    var m = state.mu;
+    if (!m || m.view !== 'redit') return;
+    var vs = Object.keys(newest).map(function (id) { return newest[id]; })
+      .filter(function (v) { return v && v.state !== 'undone' && !!v.test === !!state.test && Array.isArray(v.moves); })
+      .sort(function (a, b) { return (b.seq || 0) - (a.seq || 0); });
+    var names = [], keys = {}, kindOf = {};
+    vs.forEach(function (v) {
+      v.moves.slice().reverse().forEach(function (mv) {
+        if (!moveOk(mv)) return;
+        var key = nameKey(mv.name);
+        if (!key || keys[key]) return;
+        keys[key] = true;
+        kindOf[key] = mv.k;
+        names.push({ k: mv.k, name: cleanTyped(mv.name).slice(0, MOVE_NAME_MAX) });
+      });
+    });
+    var past = vs.filter(function (v) { return isObj(v.fields) && v.fields['Workout'] && v.fields['Workout'] !== 'Walk' && v.moves.some(moveOk); })
+      .map(function (v) {
+        var d = isDay(v.fields['Calendar date']) ? v.fields['Calendar date'] : (isDay(v.fields['Log day']) ? v.fields['Log day'] : null);
+        var t = isHM(v.fields['Time']) ? v.fields['Time'] : null;
+        var ms = v.moves.filter(moveOk).slice(0, MOVES_MAX).map(function (mv) {
+          var nm = cleanTyped(mv.name).slice(0, MOVE_NAME_MAX);
+          return { k: kindOf[nameKey(nm)] || mv.k, name: nm };
+        }).filter(function (mv) { return !!mv.name; });
+        return { when: (d ? weekday(d) + ' ' + usDate(d) : '') + (t ? ', ' + ampm(t) : ''), moves: ms };
+      }).filter(function (p) { return p.moves.length; }).slice(0, 5);     // the 5 newest with moves (034-2, AK F4)
+    m.names = names; m.past = past;
+    muRedraw(null);
+  }, function () {
+    var m = state.mu;
+    if (m && m.view === 'redit') { m.names = []; m.past = []; muRedraw(null); }
+  });
+}
+function drawRoutineEdit(sc, add, m, locked) {
+  add(sc, 'h3', '', 'Name');
+  var nm = add(sc, 'input', 'box line');
+  nm.id = 'murname'; nm.type = 'text'; nm.maxLength = USUAL_NAME_TYPED_MAX; nm.autocomplete = 'off';
+  nm.placeholder = 'Name, like Upper body';          // a made-up example (round 3, picture 7)
+  nm.value = m.name;
+  if (!m.id) {
+    add(sc, 'h3', '', 'Start from a past workout (optional)');
+    if (m.past === null) add(sc, 'div', 'hint', 'Reading your workouts…').style.margin = '0 12px';
+    else if (!m.past.length) add(sc, 'div', 'hint', 'No made-up workouts with moves on this phone yet.').style.margin = '0 12px';
+    else m.past.forEach(function (p, j) {
+      var b = add(sc, 'button', 'mupast' + (m.pastOn === j && stable(m.moves) === stable(p.moves) ? ' on' : ''));
+      b.type = 'button'; b.setAttribute('data-j', String(j));
+      add(b, 'b', '', p.when);
+      var first = p.moves.slice(0, 3).map(function (x) { return x.name; }).join(', ');
+      add(b, 'span', '', movesCount(p.moves.length) + ': ' + first + (p.moves.length > 3 ? '…' : ''));
+    });
+  }
+  add(sc, 'h3', '', 'Moves, in order');
+  var box = add(sc, 'div', 'wkmoves');
+  box.id = 'murmoves';
+  if (!m.moves.length) add(box, 'div', 'wknone', m.id ? 'No moves yet.' : 'No moves yet. Start from a past workout above, or add moves one at a time.');
+  m.moves.forEach(function (mv, i) {
+    var b = add(box, 'button', 'wkmove murmove' + (m.box && m.box.mode === 'move' && m.box.i === i ? ' on' : ''));
+    b.type = 'button'; b.setAttribute('data-i', String(i));
+    add(b, 'div', 'mn', mv.name);
+    add(b, 'div', 'md', moveKind(mv.k).name);
+  });
+  var kinds = function (bx, on) {
+    var kr = add(bx, 'div', 'wkkind');
+    MOVE_KINDS.forEach(function (mk) {
+      var c = add(kr, 'button', 'choice' + (on === mk.k ? ' on' : ''), mk.name);
+      c.type = 'button'; c.setAttribute('data-k', mk.k); c.setAttribute('aria-pressed', on === mk.k ? 'true' : 'false');
+    });
+  };
+  if (m.box && m.box.mode === 'move' && m.moves[m.box.i]) {
+    var eb = add(sc, 'div', 'wkedit');
+    eb.id = 'murbox';
+    add(eb, 'div', 't', m.moves[m.box.i].name);
+    kinds(eb, m.moves[m.box.i].k);
+    var two = add(eb, 'div', 'wktwo');
+    var out = add(two, 'button', 'wkout', 'Take this move out'); out.type = 'button'; out.id = 'murout';
+    var dn = add(two, 'button', 'btn', 'Done'); dn.type = 'button'; dn.id = 'murdone';
+  } else if (m.box && m.box.mode === 'add') {
+    var ab = add(sc, 'div', 'wkedit');
+    ab.id = 'murbox';
+    add(ab, 'div', 't', 'New move');
+    var names = m.names || [];
+    if (names.length) {
+      var ch = add(ab, 'div', 'wkchips');
+      ch.id = 'murchips';
+      add(ch, 'span', 'l', 'Used before (tap one to fill it in):');
+      var all = m.allNames || names.length <= NAMES_FIRST;
+      names.forEach(function (x, j) {
+        if (!all && j >= NAMES_FIRST) return;
+        var c = add(ch, 'button', 'wkchip' + (m.box.name && nameKey(m.box.name) === nameKey(x.name) ? ' on' : ''), x.name);
+        c.type = 'button'; c.setAttribute('data-name', x.name); c.setAttribute('data-j', String(j));
+      });
+      if (!all) { var sa = add(ch, 'button', 'wkall', 'Show all ' + names.length + ' names'); sa.type = 'button'; sa.id = 'murall'; }
+    }
+    kinds(ab, m.box.k);
+    if (!m.box.k) add(ab, 'div', 'hint', names.length ? 'Tap a name used before, or pick the kind and type a new name.' : 'Pick the kind of move first.').style.margin = '0 0 6px';
+    else {
+      add(ab, 'label', 'wklbl', 'Move').setAttribute('for', 'murmname');
+      var mi = add(ab, 'input', 'wkname');
+      mi.id = 'murmname'; mi.type = 'text'; mi.autocomplete = 'off'; mi.maxLength = MOVE_NAME_MAX; mi.placeholder = 'Name, like Squats';     // a made-up example
+      mi.value = m.box.name;
+    }
+    var tw = add(ab, 'div', 'wktwo');
+    var cm = add(tw, 'button', 'btn quiet', 'Cancel'); cm.type = 'button'; cm.id = 'murcancelmove';
+    var ok = add(tw, 'button', 'btn', 'Add this move'); ok.type = 'button'; ok.id = 'muraddok';
+  } else if (m.moves.length < MOVES_MAX) {
+    var am = add(sc, 'button', 'muadd', '+ Add a move');
+    am.type = 'button'; am.id = 'muraddmove'; am.style.marginTop = '10px';
+  } else add(sc, 'div', 'hint', 'A routine can hold up to ' + MOVES_MAX + ' moves.');
+  add(sc, 'div', 'hint', 'With the next update, routines come to Workout: each move will fill in the numbers from the last time you did it.');
+  var sv = add(sc, 'button', 'save', m.id ? 'Save changes to ' + m.origName : 'Save routine');
+  sv.type = 'button'; sv.id = 'mursave';
+  if (locked) sv.disabled = true;
+  var cn = add(sc, 'button', 'btn quiet wide', 'Cancel');
+  cn.type = 'button'; cn.id = 'mucancel';
+  if (m.id && !locked) {
+    if (!m.ask) {
+      var st = add(sc, 'button', 'mustop', 'Stop using ' + m.origName);
+      st.type = 'button'; st.id = 'murstop';
+      add(sc, 'div', 'hint', m.origName + ' comes off your routines. Your sheet keeps it, marked removed, and entries already saved keep their moves.');
+    } else {
+      var ask = add(sc, 'div', 'muask');
+      ask.id = 'murask';
+      add(ask, 'b', '', 'Stop using ' + m.origName + '?');
+      ask.appendChild(document.createTextNode(' It comes off your routines. Entries already saved keep their moves.'));
+      var bs = add(ask, 'div', 'muaskbtns');
+      var y = add(bs, 'button', 'btn muyes', 'Yes, stop using it'); y.type = 'button'; y.id = 'muryes';
+      var no = add(bs, 'button', 'btn quiet', 'No'); no.type = 'button'; no.id = 'murno';
+    }
+  }
+}
+function routineTap(t) {
+  var m = state.mu;
+  var note = function (text) { m.note = text; m.bad = true; muRedraw(null); window.scrollTo(0, 0); };
+  if (t.classList.contains('mupast')) {
+    var p = m.past && m.past[Number(t.getAttribute('data-j'))];
+    if (!p) return;
+    // Only while nothing would be lost (034-2, AK F2): no move half-typed, and the list empty or as the last one tapped left it.
+    if (m.box && m.box.mode === 'add' && (cleanTyped(m.box.name) || m.box.k)) { note('Finish the move you are on first: tap Add this move, or Cancel.'); return; }
+    var asTapped = m.pastOn !== null && m.past[m.pastOn] && stable(m.moves) === stable(m.past[m.pastOn].moves);
+    if (m.moves.length && !asTapped) { note('Your list already has moves. To start from a past workout, take them out first, or tap Cancel and start again.'); return; }
+    m.moves = clone(p.moves); m.pastOn = Number(t.getAttribute('data-j')); m.box = null; m.note = '';
+    muRedraw(null);
+    return;
+  }
+  if (t.classList.contains('murmove')) {
+    if (m.box && m.box.mode === 'add' && (cleanTyped(m.box.name) || m.box.k)) { note('Finish the move you are on first: tap Add this move, or Cancel.'); return; }
+    m.box = { mode: 'move', i: Number(t.getAttribute('data-i')) }; m.note = '';
+    muRedraw(null);
+    return;
+  }
+  if (t.closest('#murbox .wkkind') && t.getAttribute('data-k') && moveKind(t.getAttribute('data-k'))) {
+    var k = t.getAttribute('data-k');
+    if (m.box && m.box.mode === 'move' && m.moves[m.box.i]) m.moves[m.box.i].k = k;
+    else if (m.box && m.box.mode === 'add') m.box.k = k;
+    muRedraw(m.box && m.box.mode === 'add' ? '#murmname' : null);
+    return;
+  }
+  if (t.id === 'murout') { if (m.box && m.box.mode === 'move') m.moves.splice(m.box.i, 1); m.box = null; muRedraw(null); return; }
+  if (t.id === 'murdone' || t.id === 'murcancelmove') { m.box = null; m.note = ''; muRedraw(null); return; }
+  if (t.id === 'muraddmove') {
+    if (m.moves.length >= MOVES_MAX) { note('A routine can hold up to ' + MOVES_MAX + ' moves.'); return; }
+    m.box = { mode: 'add', k: null, name: '' }; m.allNames = false; m.note = '';
+    muRedraw(null);
+    return;
+  }
+  if (t.id === 'murall') { m.allNames = true; muRedraw(null); return; }
+  if (t.classList.contains('wkchip') && t.closest('#murchips') && m.box && m.box.mode === 'add') {
+    var x = m.names && m.names[Number(t.getAttribute('data-j'))];
+    if (x && moveKind(x.k)) { m.box.k = x.k; m.box.name = x.name; }
+    muRedraw(null);
+    return;
+  }
+  if (t.id === 'muraddok') {
+    if (!m.box || m.box.mode !== 'add') return;
+    var name = cleanTyped(m.box.name).slice(0, MOVE_NAME_MAX);
+    if (!moveKind(m.box.k)) { note('Pick the kind of move first.'); return; }
+    if (!name) { note('Give the move a name.'); return; }
+    if (m.moves.length >= MOVES_MAX) { note('A routine can hold up to ' + MOVES_MAX + ' moves.'); return; }
+    m.moves.push({ k: m.box.k, name: name });
+    m.box = null; m.note = '';
+    muRedraw(null);
+    return;
+  }
+  if (t.id === 'mursave') { routineSave(); return; }
+  if (t.id === 'murstop') { m.ask = true; m.note = ''; muRedraw(null); return; }
+  if (t.id === 'murno') { m.ask = false; muRedraw(null); return; }
+  if (t.id === 'muryes') { routineStop(); return; }
+}
+function routineSave() {
+  var m = state.mu;
+  if (!m || m.view !== 'redit' || muBusy) return;
+  if (routinesLocked()) { muRedraw(null); return; }
+  var name = cleanTyped(m.name), list = state.rt.value.list, err = '';
+  if (m.box && m.box.mode === 'add' && (cleanTyped(m.box.name) || m.box.k)) err = 'The move you are on is not in the list yet: tap Add this move, or Cancel.';
+  else if (!name) err = 'Give the routine a name.';
+  else if (name.length > USUAL_NAME_TYPED_MAX) err = 'A name can be up to ' + USUAL_NAME_TYPED_MAX + ' characters.';
+  else if (list.some(function (r) { return r.id !== m.id && nameKey(r.name) === name.toLowerCase(); })) err = 'You already have a routine called ' + name + '. Pick another name.';
+  else if (['walk', 'made up as i go', 'make it up as i go'].indexOf(name.toLowerCase()) >= 0) err = '“' + name + '” can’t be used as a routine’s name, because Workout already offers it.';     // 034-2
+  else if (!m.id && list.length >= ROUTINES_MAX) err = 'You can keep up to ' + ROUTINES_MAX + ' routines. Stop using one first.';     // 034-2 (AK F3)
+  else if (!m.moves.length) err = 'Add at least one move.';
+  else if (m.moves.length > MOVES_MAX) err = 'A routine can hold up to ' + MOVES_MAX + ' moves.';
+  if (err) { m.note = err; m.bad = true; muRedraw(null); window.scrollTo(0, 0); return; }
+  var moves = m.moves.map(function (x) { return { k: x.k, name: cleanTyped(x.name).slice(0, MOVE_NAME_MAX) }; });
+  if (m.id && name === m.origName && stable(moves) === stable(m.origMoves)) {
+    muList('Nothing was changed, so nothing was saved.'); render(); window.scrollTo(0, 0); return;
+  }
+  var stamp = DL.stampNow();
+  writeRoutines(function (v) {
+    if (m.id) {
+      var i = -1;
+      v.list.forEach(function (r, j) { if (r.id === m.id) i = j; });
+      if (i < 0 || v.list[i].version !== m.base) return null;
+      v.list[i] = { id: m.id, version: m.base + 1, name: name, moves: moves, savedAt: stamp };
+    } else v.list.push({ id: newRoutineId(v), version: 1, name: name, moves: moves, savedAt: stamp });
+    return v;
+  }, function (wrote) {
+    if (!wrote) { muList(OTHER_COPY_ROUTINES, true); render(); window.scrollTo(0, 0); return; }
+    muList(m.id ? 'Saved. ' + name + ' is changed from now on.' : 'Saved. ' + name + ' is added to your routines.');
+    render(); window.scrollTo(0, 0);
+  });
+}
+function routineStop() {
+  var m = state.mu;
+  if (!m || m.view !== 'redit' || !m.id || muBusy) return;
+  if (routinesLocked()) { muRedraw(null); return; }
+  var stamp = DL.stampNow(), gone = m.origName;
+  writeRoutines(function (v) {
+    var i = -1;
+    v.list.forEach(function (r, j) { if (r.id === m.id) i = j; });
+    if (i < 0 || v.list[i].version !== m.base) return null;
+    var r = v.list[i];
+    v.list.splice(i, 1);
+    v.removed = (Array.isArray(v.removed) ? v.removed : []).concat([{ id: r.id, version: r.version + 1, name: r.name, moves: r.moves, savedAt: stamp }]);
+    return v;
+  }, function (wrote) {
+    if (!wrote) { muList(OTHER_COPY_ROUTINES, true); render(); window.scrollTo(0, 0); return; }
+    muList('Done. ' + gone + ' is off your routines.');
+    render(); window.scrollTo(0, 0);
+  });
+}
+// One storage step for "routines", compared first with what this page last read (as writeUsuals).
+function writeRoutines(make, done) {
+  if (muBusy) return;
+  muBusy = true;
+  var known = state.rt ? state.rt.known : null, got, wrote = null, refused = false;
+  DL.db().then(function (d) {
+    return new Promise(function (resolve, reject) {
+      var t = d.transaction(['kv'], 'readwrite');
+      var s = t.objectStore('kv');
+      var q = s.get('routines');
+      q.onsuccess = function () {
+        got = q.result;
+        if (stable(got) !== known) { refused = true; return; }
+        var base = got === undefined ? { list: [], removed: [] } : clone(got);
+        if (!Array.isArray(base.removed)) base.removed = [];
+        wrote = make(base);
+        if (!wrote) return;
+        if (!routinesOk(wrote)) { wrote = null; throw new Error('not a readable value'); }
+        s.put(wrote, 'routines');
+      };
+      t.oncomplete = function () { resolve(); };
+      t.onerror = function () { reject(t.error || new Error('storage error')); };
+      t.onabort = function () { reject(t.error || new Error('storage aborted')); };
+    });
+  }).then(function () {
+    muBusy = false;
+    if (refused) {
+      var ok = got === undefined || routinesOk(got);
+      state.rt = { read: true, ok: ok, value: got === undefined ? { list: [], removed: [] } : (ok ? clone(got) : null), known: stable(got) };
+      done(null); return;
+    }
+    if (wrote) { state.rt = { read: true, ok: true, value: clone(wrote), known: stable(wrote) }; tellKept(); kick(); }
+    done(wrote);
+  }, function () {
+    muBusy = false;
+    if (state.mu) {
+      state.mu.note = 'Not saved: this phone could not write to its own storage just now. Try again; if it keeps happening, tell Claude.';
+      state.mu.bad = true;
+      muRedraw(null);
+      window.scrollTo(0, 0);
+    }
+  });
+}
+// Routines to the Usual ones tab (G034-6): each version once per kind of link, marked removed when no longer used.
+var rtSeeding = false, rtSeedAgain = false;
+function seedRoutines() {
+  var link = state.link;
+  if (!link || state.noStorage) return;
+  if (rtSeeding) { rtSeedAgain = true; return; }
+  rtSeeding = true;
+  var which = link.test ? 'test' : 'real';
+  var flagOf = function (r) { return 'routineSent-' + r.id + '-v' + r.version + '-' + which; };
+  DL.get('kv', 'routines').then(function (v) {
+    if (v === undefined || !routinesOk(v)) return null;
+    var all = v.list.map(function (r) { return { r: r, st: 'current' }; })
+      .concat((v.removed || []).map(function (r) { return { r: r, st: 'removed' }; }));
+    if (!all.length) return null;
+    return Promise.all(all.map(function (a) { return DL.get('kv', flagOf(a.r)); })).then(function (got) {
+      var toSend = all.filter(function (a, i) { return !got[i]; });
+      if (!toSend.length) return null;
+      var stamp = DL.stampNow();
+      return DL.run(['outbox', 'kv'], 'readwrite', function (s) {
+        toSend.forEach(function (a) {
+          var r = a.r;
+          var fields = { 'Kind': 'Workout routine', 'Name': r.name, 'Contents': routineText(r), 'Saved at': typeof r.savedAt === 'string' && r.savedAt ? r.savedAt : stamp };
+          var appR = { kind: 'Workout routine', name: r.name, moves: r.moves.map(function (m) { return { kind: moveKind(m.k).name, name: m.name }; }) };
+          s.outbox.put({ key: r.id + ':' + r.version + ':' + which, seq: nextSeq(), status: 'waiting',
+                         payload: { kind: 'usual', test: !!link.test, id: r.id, version: r.version, state: a.st, fields: fields,
+                                    app: { page: PAGE_VERSION, routine: appR } } });
+          s.kv.put(true, flagOf(r));
+        });
+      }).then(function () { return DL.sendWaiting(); });
+    });
+  }).then(function () { rtSeedDone(); }, function () { rtSeedDone(); });
+}
+function rtSeedDone() {
+  rtSeeding = false;
+  refreshStatus();
+  if (rtSeedAgain) { rtSeedAgain = false; seedRoutines(); }
+}
+
 // ------------------------------------------------------------------ sending
 
 // Send the usual ones to the Usual ones tab once per kind of link (real or
@@ -4137,6 +4575,7 @@ function kick() {
   refreshStatus();
   refreshDone();
   seedUsuals();
+  seedRoutines();                    // 034
   // Chrome's background send covers the page being closed before its own send
   // finished; the worker waits 20 seconds first, so it finds nothing left to
   // send when the page's send got through. It is asked for only when something
@@ -4749,6 +5188,7 @@ function renderIntraday() {
   tw.classList.toggle('end', !!runShown);
   tw.setAttribute('aria-pressed', won ? 'true' : 'false');
   el('p-Workout').hidden = !(dr.workout && !runShown);
+  el('mu-Workout').hidden = fixOn('Intraday');                          // 034 (G034-7), as under Shake and Medicine
   // A kind kept from an earlier page (G028-6), or recorded in the entry being changed, is offered as its own choice.
   var xk = dr.workout && dr.workout.kind && WORKOUT_KINDS.indexOf(dr.workout.kind) < 0 ? dr.workout.kind : null;
   var xb = el('wk-extra');
@@ -5036,6 +5476,7 @@ function buildButtons() {
     el('c-Workout').appendChild(b);
   });
   el('wkopen').addEventListener('click', openWorkout);      // 028
+  el('mu-Workout').addEventListener('click', function () { openUsuals('Workout'); });     // 034 (G034-7)
   el('t-Workout').addEventListener('click', function () {
     if (fixOn('Intraday')) {        // a walk or workout can't be added or taken off a saved entry (019, G019-4)
       showNote(idr().workout ? 'A walk or workout can’t be taken off a saved entry. You can change its kind.'
