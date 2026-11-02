@@ -131,7 +131,7 @@ h3 { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.06em; color
 .ynb.on { border: 2px solid var(--accent); background: var(--accent-soft); }
 .ynb.on .chk { display: inline; }
 .endq { margin: 10px 12px 2px; background: var(--wait-soft); border: 2px solid #e2c56f; border-radius: 14px; padding: 10px 12px; }
-.endq .t { font-weight: 700; margin-bottom: 8px; color: var(--ink); }
+.endq .t { font-weight: 700; margin-bottom: 8px; color: var(--ink); overflow-wrap: anywhere; }
 .endq .tbox.inq { margin: 0 0 8px; }
 .btn.dk { width: 100%; text-align: center; padding: 10px; }
 .btn.dk.on { background: var(--accent); color: #fff; }
@@ -244,7 +244,7 @@ body.usualsopen main > :not(#sc-Usuals):not(#status):not(#error) { display: none
 body.wkopen #heads, body.wkopen #fixbanner { display: none !important; }
 body.wkopen main > :not(#sc-Workout):not(#status):not(#error) { display: none !important; }
 #runbox { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
-#runbox #running { flex: 1; }
+#runbox #running { flex: 1; min-width: 0; overflow-wrap: anywhere; }     /* 035-2 (AL F4): a long routine name wraps */
 #runbox .btn { flex: none; }
 .wkrun { margin: 10px 12px 0; padding: 10px 12px; border-radius: 12px; background: var(--accent-soft); border: 1px solid #c9d8e8; }
 .wkrun b { display: block; font-size: 16px; }
@@ -273,6 +273,14 @@ body.wkopen main > :not(#sc-Workout):not(#status):not(#error) { display: none !i
 .wkpause { flex: none; border: 1px solid var(--accent); background: #fff; color: var(--accent); border-radius: 12px; padding: 9px 14px; font: inherit; font-weight: 700; font-size: 15px; }
 .wkresume { flex: none; border: 0; background: #2e7d4f; color: #fff; border-radius: 12px; padding: 11px 16px; font: inherit; font-weight: 700; font-size: 16px; }
 .wkmove.wkbreak { background: #f3f1ec; }
+/* 035: Still to do, a routine's moves not done yet, each with Done (D286) */
+.wktrow { display: flex; align-items: center; gap: 8px; background: #fff; border-top: 1px solid var(--line); padding-right: 12px; }
+.wktrow:first-child { border-top: 0; }
+.wktname { flex: 1; min-width: 0; display: block; text-align: left; background: transparent; border: 0; padding: 10px 12px; color: var(--ink); font: inherit; }
+.wktname .mn { font-weight: 700; font-size: 16px; overflow-wrap: anywhere; }
+.wktname .md { font-size: 14px; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
+.wkdone { flex: none; padding: 9px 16px; font-size: 15px; }
+.wklast { font-size: 14px; color: var(--muted); margin: -4px 0 10px; overflow-wrap: anywhere; }
 .wkmove.wkbreak .mn { color: #6b6457; font-weight: 600; }
 .mupast { display: block; width: calc(100% - 24px); margin: 6px 12px 0; text-align: left; background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; font: inherit; color: var(--ink); }
 .mupast b { display: block; font-size: 15.5px; }

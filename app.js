@@ -248,7 +248,19 @@
 // only while nothing would be lost, and not while a move is half-typed (F2); a 101st routine says so (F3); the 5 newest
 // past workouts with moves (F4); no routine called Walk, Made up as I go or Make it up as I go; damaged routines get their
 // own line; one ID twice, or a name of only spaces, is damage.
-var PAGE_VERSION = '034-2';
+// 035 (session 32): a routine started from Workout and tapped through (R128, D276, D286 to D290, G035-1 to G035-10). Workout's
+// choices offer his routines first; started like any workout, the routine's moves are copied into the running workout (kv
+// "running": plan [{ k, name }], planName, rt), so a change to the routine later does not change it. The Workout screen
+// shows Done (the moves done, in the order done) and Still to do (the plan's moves not done, each with the numbers from the
+// last time a move of that name was done, in any workout, and a Done button); a move done carries rj, its place in the plan
+// (kv "draft-workout"). Its name tapped opens its box filled in from last time. Only the moves done are saved; the green bar
+// says how many were not done and left out. Pages before 035 do not know plan or rj.
+// 035-2 (Agent AL): a double tap on a box's Done, Take this move out or Cancel does not reach the row below (F1); last time
+// goes by when a workout happened, not when it was saved or changed (F2); a box opened from a routine move's name is an
+// ordinary box once the workout is no longer that routine's, and its move is kept (F3); a long routine name wraps (F4);
+// paused, "1 of 5 done"; nothing done, "no moves" on Intraday too; last time unreadable: the box says so, a stretch can
+// still be done; a box opened from a name and left as it was does not hold up End or another Done.
+var PAGE_VERSION = '035-2';
 var SCREENS = ['Morning', 'Intraday', 'Evening'];
 var SCORE_ROWS = ['Mind', 'Body', 'Balance'];
 var MORNING_SCORES = [{ label: 'Quality', key: 'Sleep quality' }, { label: 'Amount', key: 'Sleep amount' }];
@@ -1612,8 +1624,18 @@ function save() {
   var dr = cur();
   var run = state.running;
   if (screen === 'Intraday' && dr.workout && !dr.workout.kind) {
-    showNote('Pick Walk or Make it up as I go, or tap Workout again to take it off.');
+    showNote(routineChoices().length ? 'Pick a routine, Walk or Make it up as I go, or tap Workout again to take it off.'
+                                     : 'Pick Walk or Make it up as I go, or tap Workout again to take it off.');
     return;
+  }
+  if (screen === 'Intraday' && !fixOn('Intraday') && dr.workout && dr.workout.rt) {                 // a routine (035)
+    var pr = routineById(dr.workout.rt);
+    if (!pr) {
+      showNote(state.rt && state.rt.ok ? 'That routine is not in My usual ones any more. Pick another, or tap Workout again to take it off.'
+                                       : 'Your routines could not be read on this phone just now, so a routine can’t be started. Pick Walk or Make it up as I go; if this stays, tell Claude.');
+      return;
+    }
+    dr.workout.kind = pr.name;                                                                    // its name now (G035-1)
   }
   if (screen === 'Intraday' && dr.liquids && !liquidsPicked(dr)) {
     showNote('Pick Coffee, Water or Something else, or tap Liquids again to take it off.');
@@ -1693,6 +1715,8 @@ function save() {
       newRunning = { id: id, version: 1, test: state.test, kind: dr.workout.kind, fields: fields,
                      startAt: dr.fixed.at || momentOf(dr.fixed.date, dr.fixed.time).getTime(),
                      startDate: dr.fixed.date, startTime: dr.fixed.time };
+      var npr = dr.workout.rt && !fixOn('Intraday') ? routineById(dr.workout.rt) : null;          // the routine's moves, copied (035)
+      if (npr) { newRunning.plan = npr.moves.map(function (m) { return { k: m.k, name: m.name }; }); newRunning.planName = npr.name; newRunning.rt = npr.id; }
     }
   }
   var endMoves = null, endBreaks = null;              // the moves (028, G028-2) and breaks (033) saved with the end
@@ -1712,7 +1736,7 @@ function save() {
     if (endMoves) endV.moves = endMoves;
     if (endBreaks) endV.breaks = endBreaks;
     endOut = { key: endV.key, seq: endV.seq, status: 'waiting', payload: payloadFor(endV) };
-    var rk = runName(run.kind), mv = endMoves ? ', ' + movesCount(endMoves.length) : '';
+    var rk = runName(run.kind), mv = (endMoves ? ', ' + movesCount(endMoves.length) : (planLeft(run, wkn).length ? ', no moves' : '')) + leftWords(planLeft(run, wkn).length);     // 035, 035-2
     if (endHow.atTop) {
       bits.push(rk + ' ended (' + whenOf(run.startDate, run.startTime, dr.fixed.date) + ' to ' + ampm(topEnd) + ')' + mv);
     } else if (endHow.unknown) {
@@ -2439,13 +2463,59 @@ var WK_UNREAD = 'This phone could not read the moves of your workout, so they ca
 var WK_UNREAD_END = 'This phone could not read the moves of your workout. Tap Save again to end it without them (what is stored stays as it is), ' +
                     'or close the page and open it again first; if this keeps happening, tell Claude.';
 function wkHalfText(w) {
-  return 'Not saved: your workout has ' + pendingWords(w) + '. On Intraday tap Open, then ' + (w.edit && w.edit.i >= 0 ? 'Done' : 'Add this move') +
+  return 'Not saved: your workout has ' + pendingWords(w) + '. On Intraday tap Open, then ' + okWord(w.edit) +
          ' (or Cancel), then end the workout again.';
 }
 var WK_NOT_KEPT = 'This phone could not keep your moves just now. Keep the day log open and tap End workout when you finish; ' +
                   'if this keeps happening, tell Claude.';
 function moveKind(k) { var m = MOVE_KINDS.filter(function (x) { return x.k === k; })[0]; return m || null; }
 function runName(kind) { return kind === MADE_UP ? 'Workout' : kind; }
+// A routine's moves copied into the running workout when it started (035); only while it is still that routine's workout
+// (its kind not changed on the yellow screen) and the copy reads right.
+function runPlan(r) {
+  if (!r || r.kind === 'Walk' || typeof r.planName !== 'string' || r.planName !== r.kind || !Array.isArray(r.plan) ||
+      !r.plan.length || r.plan.length > MOVES_MAX) return null;
+  return r.plan.every(function (m) { return isObj(m) && moveKind(m.k) !== null && typeof m.name === 'string' && !!cleanTyped(m.name) && m.name.length <= MOVE_NAME_MAX + 20; }) ? r.plan : null;
+}
+function planDone(w) { var d = {}; (w && Array.isArray(w.moves) ? w.moves : []).forEach(function (m) { if (isNum(m.rj)) d[m.rj] = true; }); return d; }
+function planLeft(r, w) {
+  var pl = runPlan(r), d = planDone(w), out = [];
+  if (pl) pl.forEach(function (m, j) { if (!d[j]) out.push(j); });
+  return out;
+}
+function leftWords(n) { return n ? '; ' + movesCount(n) + ' not done, left out' : ''; }     // D287
+function okWord(e) { return e && (e.i >= 0 || planEdit(e)) ? 'Done' : 'Add this move'; }
+// The routine's move a box was opened for from Still to do, while the workout is still that routine's (035-2, AL F3).
+function planEdit(e) {
+  var pl = e && e.i < 0 && isNum(e.rj) ? runPlan(state.running) : null;
+  return pl && pl[e.rj] ? pl[e.rj] : null;
+}
+// What a box opened from a name holds, to tell whether anything in it was changed (035-2).
+function editSig(e) {
+  return JSON.stringify([MOVE_FIELDS.map(function (f) { return String(e[f] || '').trim(); }), e.each === true, cleanTyped(e.band || '')]);
+}
+// A move of the plan as done now (G035-3, D288): the newest move of that name (other capitals the same) in this workout or
+// any workout saved on this phone; only the boxes of the plan's kind.
+function lastFor(pm) {
+  var key = nameKey(pm.name), mk = moveKind(pm.k), o = { k: pm.k, name: cleanTyped(pm.name).slice(0, MOVE_NAME_MAX) }, hit = null;
+  var here = state.wkd && state.running && state.wkd.id === state.running.id ? state.wkd.moves.slice().reverse() : [];
+  var saved = state.wk && state.wk.lastMoves ? state.wk.lastMoves : ((state.wk && state.wk.names) || []);     // by when done (035-2, AL F2)
+  here.concat(saved).some(function (m) { if (moveKind(m.k) && nameKey(m.name) === key) { hit = m; return true; } return false; });
+  if (hit) {
+    mk.boxes.forEach(function (b) { if (typeof hit[b[0]] === 'string' && hit[b[0]] !== '') o[b[0]] = hit[b[0]]; });
+    if (mk.each && hit.each === true) o.each = true;
+    if (mk.band && typeof hit.band === 'string' && hit.band !== '') o.band = hit.band;
+  }
+  return o;
+}
+function lastLine(pm) {
+  var mk = moveKind(pm.k);
+  if (!mk.boxes.length) return mk.name;
+  if (!state.wk || state.wk.names === null) return 'Reading last time…';
+  if (state.wk.namesFailed) return 'Last time could not be read';
+  var p = moveParts(lastFor(pm));
+  return p.length ? 'Last time: ' + p.join(' · ') : 'No numbers from before';     // G035-2
+}
 function movesCount(n) { return n + (n === 1 ? ' move' : ' moves'); }
 function wkOf(run) { return run && state.wkd && state.wkd.id === run.id ? state.wkd : null; }
 function wkRev() { return (state.wk && state.wk.rev || 0) + 1; }
@@ -2468,6 +2538,8 @@ function normEdit(e) {
   MOVE_FIELDS.forEach(function (f) { if (typeof e[f] === 'string') o[f] = e[f]; });
   o.each = e.each === true;
   if (typeof e.band === 'string') o.band = e.band;                      // 032
+  if (isNum(e.rj) && e.rj >= 0 && e.rj < MOVES_MAX && Math.floor(e.rj) === e.rj) o.rj = e.rj;     // a plan's move (035)
+  if (typeof e.base === 'string' && e.base.length <= 1000) o.base = e.base;                        // 035-2
   return o;
 }
 // A stored list of moves as the page uses it: moves and a half-typed move it cannot use are left out (028-3; Agent AE, W2).
@@ -2478,6 +2550,8 @@ function normWk(v) {
   // A change to a move, when a move was left out: its place may no longer be that move's, so it is not kept (028-4; Agent AE, R4).
   if (ed && ed.i >= 0 && (ms.length !== all.length || ed.i >= ms.length)) ed = null;
   var o = { id: v.id, moves: ms.map(normMove), edit: ed };
+  var seenRj = {};                                                       // each plan place once (035)
+  ms.forEach(function (m, i) { if (isNum(m.rj) && m.rj >= 0 && m.rj < MOVES_MAX && Math.floor(m.rj) === m.rj && !seenRj[m.rj]) { seenRj[m.rj] = true; o.moves[i].rj = m.rj; } });
   // Breaks and a pause (033): kept when they read right, each place no further than the moves kept.
   var bs = Array.isArray(v.breaks) ? v.breaks.filter(breakOk).slice(0, BREAKS_MAX) : [];
   if (bs.length) o.breaks = bs.map(function (br) { return { i: Math.min(br.i, o.moves.length), a: br.a, b: br.b }; });
@@ -2544,6 +2618,7 @@ function addMoves(pl, moves) {
 function editPending(w) {
   var e = w && w.edit;
   if (!e) return false;
+  if (e.i < 0 && planEdit(e) && typeof e.base === 'string') return editSig(e) !== e.base;     // 035-2
   if (e.i < 0) return editHas(e);
   var m = w.moves[e.i];
   if (!m) return editHas(e);
@@ -2632,9 +2707,20 @@ function wkLoadNames() {
       .filter(function (v) { return v && v.state !== 'undone' && !!v.test === !!state.test && Array.isArray(v.moves); })
       .sort(function (a, b) { return (b.seq || 0) - (a.seq || 0); })
       .forEach(function (v) { v.moves.slice().reverse().forEach(function (m) { if (moveOk(m)) seen.push(normMove(m)); }); });     // whole moves (032)
+    // For last time (035-2, AL F2): the workouts in the order they happened (their date and time), not as last saved.
+    var whenKey = function (v) {
+      var f = isObj(v.fields) ? v.fields : {};
+      return (isDay(f['Calendar date']) ? f['Calendar date'] : (isDay(f['Log day']) ? f['Log day'] : '')) + ' ' + (isHM(f['Time']) ? f['Time'] : '');
+    };
+    var lastMoves = [];
+    Object.keys(newest).map(function (id) { return newest[id]; })
+      .filter(function (v) { return v && v.state !== 'undone' && !!v.test === !!state.test && Array.isArray(v.moves); })
+      .sort(function (a, b) { var ka = whenKey(a), kb = whenKey(b); return ka < kb ? 1 : (ka > kb ? -1 : (b.seq || 0) - (a.seq || 0)); })
+      .forEach(function (v) { v.moves.slice().reverse().forEach(function (m) { if (moveOk(m)) lastMoves.push(normMove(m)); }); });
+    state.wk.lastMoves = lastMoves;
     state.wk.names = seen;
     wkRedraw(state.wk.note, state.wk.bad);
-  }, function () { /* no names offered */ });
+  }, function () { if (state.wk) { state.wk.names = []; state.wk.namesFailed = true; wkRedraw(state.wk.note, state.wk.bad); } });     // 035
 }
 // Since 032 (D257, G032-1, G032-2): every name used before, of every kind, newest first (this workout's own moves first),
 // the same name in other capitals once, as last typed; each with its last move, to fill in when tapped.
@@ -2681,6 +2767,7 @@ function renderWorkout() {
     return e;
   };
   var r = state.running, w = wkOf(r), moves = w ? w.moves : [], ed = w ? w.edit : null;
+  var plan = runPlan(r);                                                 // a routine (035)
   var bar = add(sc, 'div', 'mubar');
   var back = add(bar, 'button', 'muback', '‹ Intraday');
   back.type = 'button'; back.id = 'wkback';
@@ -2696,17 +2783,21 @@ function renderWorkout() {
     add(rtx, 'b', '', 'Running since ' + whenOf(r.startDate, r.startTime, dateStr(new Date())));
     var nbk = w && w.breaks ? w.breaks.length : 0, mbk = 0;
     if (nbk) w.breaks.forEach(function (br) { mbk += brMin(br); });
-    add(rtx, 'span', '', nbk ? nbk + (nbk === 1 ? ' break' : ' breaks') + ' so far (' + mbk + ' min). Add each move as you do it.' : 'Add each move as you do it, or all at the end.');
+    if (plan) add(rtx, 'span', '', nbk ? nbk + (nbk === 1 ? ' break' : ' breaks') + ' so far (' + mbk + ' min). Tap Done after each move.' : 'Tap Done after each move. Its numbers are the ones from last time.');     // 035
+    else add(rtx, 'span', '', nbk ? nbk + (nbk === 1 ? ' break' : ' breaks') + ' so far (' + mbk + ' min). Add each move as you do it.' : 'Add each move as you do it, or all at the end.');
   }
   var pbtn = add(run, 'button', wp ? 'wkresume' : 'wkpause', wp ? 'Resume' : 'Pause');
   pbtn.type = 'button'; pbtn.id = wp ? 'wkresumebtn' : 'wkpausebtn';
   if (state.wk.note) { var n = add(sc, 'div', 'munote' + (state.wk.bad ? ' bad' : ''), state.wk.note); n.id = 'wknote'; }
-  add(sc, 'h3', '', 'Moves');
-  var box = add(sc, 'div', 'wkmoves');
-  box.id = 'wkmoves';
   var wbs = w && w.breaks ? w.breaks : [];
-  if (!moves.length && !wbs.length) add(box, 'div', 'wknone', 'No moves yet.');
-  wkLines(moves, wbs, function (m, i) {
+  var box = null;
+  if (!plan || moves.length || wbs.length) {                             // a routine: Done only once something is (035, D286)
+    add(sc, 'h3', '', plan ? 'Done' : 'Moves');
+    box = add(sc, 'div', 'wkmoves');
+    box.id = 'wkmoves';
+  }
+  if (!plan && !moves.length && !wbs.length) add(box, 'div', 'wknone', 'No moves yet.');
+  if (box) wkLines(moves, wbs, function (m, i) {
     var b = add(box, 'button', 'wkmove' + (ed && ed.i === i ? ' on' : ''));
     b.type = 'button'; b.setAttribute('data-i', String(i));
     add(b, 'div', 'mn', m.name);
@@ -2718,20 +2809,49 @@ function renderWorkout() {
     add(k, 'div', 'mn', 'Break');
     add(k, 'div', 'md', hmAt(br.a) + ' to ' + hmAt(br.b) + ' · ' + brMin(br) + ' min');
   });
-  if (ed) drawWkEdit(sc, add, ed, moves);
-  else if (moves.length < MOVES_MAX) {
+  var edDrawn = false;
+  if (plan) {
+    // Still to do (035, D286): the plan's moves not done, in the plan's order; a name tapped opens its box in its place (D289).
+    if (ed && ed.i >= 0) { drawWkEdit(sc, add, ed, moves); edDrawn = true; }
+    add(sc, 'h3', '', 'Still to do');
+    var left = planLeft(r, w), tb = null, afterBox = false;
+    if (!left.length) { tb = add(sc, 'div', 'wkmoves'); tb.id = 'wktodo'; add(tb, 'div', 'wknone', 'All the moves are done.'); }
+    left.forEach(function (j) {
+      if (ed && ed.i < 0 && ed.rj === j && planEdit(ed)) { drawWkEdit(sc, add, ed, moves); edDrawn = true; tb = null; afterBox = true; return; }
+      if (!tb) {                                                         // made when a row needs it (035-2)
+        tb = add(sc, 'div', 'wkmoves' + (afterBox ? ' wktodo2' : ''));
+        if (!el('wktodo')) tb.id = 'wktodo';
+        if (afterBox) tb.style.marginTop = '10px';
+      }
+      var row = add(tb, 'div', 'wktrow');
+      var nb = add(row, 'button', 'wktname');
+      nb.type = 'button'; nb.setAttribute('data-j', String(j));
+      add(nb, 'div', 'mn', plan[j].name);
+      add(nb, 'div', 'md', lastLine(plan[j]));
+      var db = add(row, 'button', 'btn wkdone', 'Done');
+      db.type = 'button'; db.setAttribute('data-j', String(j));
+    });
+  }
+  if (ed && !edDrawn) drawWkEdit(sc, add, ed, moves);
+  else if (!ed && moves.length < MOVES_MAX) {
     var am = add(sc, 'button', 'muadd', '+ Add a move');
     am.type = 'button'; am.id = 'wkadd'; am.style.marginTop = '10px';
-  } else add(sc, 'div', 'hint', 'A workout can hold up to ' + MOVES_MAX + ' moves.');
+  } else if (!ed) add(sc, 'div', 'hint', 'A workout can hold up to ' + MOVES_MAX + ' moves.');
   var end = add(sc, 'button', 'wkend', 'End workout');
   end.type = 'button'; end.id = 'wkendbtn';
-  add(sc, 'div', 'hint', 'End workout saves it at once, with its moves, and you can Undo it on Intraday.').style.margin = '8px 12px 0';
+  add(sc, 'div', 'hint', plan ? 'End workout saves it at once, with the moves marked Done, and you can Undo it on Intraday.'
+                              : 'End workout saves it at once, with its moves, and you can Undo it on Intraday.').style.margin = '8px 12px 0';
 }
 function drawWkEdit(sc, add, ed, moves) {
   var bx = add(sc, 'div', 'wkedit');
   bx.id = 'wkedit';
-  add(bx, 'div', 't', ed.i >= 0 && moves[ed.i] ? moves[ed.i].name : 'New move');
-  var names = wkNameList();
+  var rjEd = !!planEdit(ed) && !!moveKind(ed.k);                          // a plan's move, opened from Still to do (035, D289; 035-2)
+  add(bx, 'div', 't', ed.i >= 0 && moves[ed.i] ? moves[ed.i].name : (rjEd ? ed.name : 'New move'));
+  if (rjEd) {
+    var lp = moveKind(ed.k).boxes.length ? moveParts(lastFor({ k: ed.k, name: ed.name })) : [];
+    add(bx, 'div', 'wklast', moveKind(ed.k).name + (moveKind(ed.k).boxes.length ? (state.wk && state.wk.namesFailed ? ' · last time could not be read' : (lp.length ? ' · last time: ' + lp.join(' · ') : ' · no numbers from before')) : ''));
+  }
+  var names = rjEd ? [] : wkNameList();
   state.wk.chipMoves = names;
   if (names.length) {
     var ch = add(bx, 'div', 'wkchips');
@@ -2746,20 +2866,24 @@ function drawWkEdit(sc, add, ed, moves) {
     });
     if (!all) { var sa = add(ch, 'button', 'wkall', 'Show all ' + names.length + ' names'); sa.type = 'button'; sa.id = 'wkallnames'; }
   }
-  var kr = add(bx, 'div', 'wkkind');
-  MOVE_KINDS.forEach(function (mk) {
-    var c = add(kr, 'button', 'choice' + (ed.k === mk.k ? ' on' : ''), mk.name);
-    c.type = 'button'; c.setAttribute('data-k', mk.k); c.setAttribute('aria-pressed', ed.k === mk.k ? 'true' : 'false');
-  });
+  if (!rjEd) {
+    var kr = add(bx, 'div', 'wkkind');
+    MOVE_KINDS.forEach(function (mk) {
+      var c = add(kr, 'button', 'choice' + (ed.k === mk.k ? ' on' : ''), mk.name);
+      c.type = 'button'; c.setAttribute('data-k', mk.k); c.setAttribute('aria-pressed', ed.k === mk.k ? 'true' : 'false');
+    });
+  }
   var mk0 = moveKind(ed.k);
   if (!mk0) {
     add(bx, 'div', 'hint', names.length ? 'Tap a name used before, or pick the kind and type a new name.' : 'Pick the kind of move first.').style.margin = '0 0 6px';
   } else {
-    add(bx, 'label', 'wklbl', 'Move').setAttribute('for', 'wkname');
-    var nm = add(bx, 'input', 'wkname');
-    nm.id = 'wkname'; nm.type = 'text'; nm.autocomplete = 'off'; nm.maxLength = MOVE_NAME_MAX;
-    nm.placeholder = mk0.k === 'w' ? 'Name, like Squats' : (mk0.k === 's' ? 'Name, like Hip stretch' : (mk0.k === 'p' ? 'Name, like Clamshells' : 'Name, like Rower'));     // made-up examples
-    nm.value = ed.name;
+    if (!rjEd) {
+      add(bx, 'label', 'wklbl', 'Move').setAttribute('for', 'wkname');
+      var nm = add(bx, 'input', 'wkname');
+      nm.id = 'wkname'; nm.type = 'text'; nm.autocomplete = 'off'; nm.maxLength = MOVE_NAME_MAX;
+      nm.placeholder = mk0.k === 'w' ? 'Name, like Squats' : (mk0.k === 's' ? 'Name, like Hip stretch' : (mk0.k === 'p' ? 'Name, like Clamshells' : 'Name, like Rower'));     // made-up examples
+      nm.value = ed.name;
+    }
     var grid = function (boxes) {
       var g = add(bx, 'div', 'wkgrid');
       boxes.forEach(function (bxi) {
@@ -2801,7 +2925,7 @@ function drawWkEdit(sc, add, ed, moves) {
   var two = add(bx, 'div', 'wktwo');
   if (ed.i >= 0) { var out = add(two, 'button', 'wkout', 'Take this move out'); out.type = 'button'; out.id = 'wkoutbtn'; }
   else { var cn = add(two, 'button', 'btn quiet', 'Cancel'); cn.type = 'button'; cn.id = 'wkcancel'; }
-  var ok = add(two, 'button', 'btn', ed.i >= 0 ? 'Done' : 'Add this move');
+  var ok = add(two, 'button', 'btn', okWord(ed));
   ok.type = 'button'; ok.id = 'wkok';
   if (ed.i >= 0) { var cn2 = add(bx, 'button', 'btn quiet', 'Cancel'); cn2.type = 'button'; cn2.id = 'wkcancel'; cn2.style.marginTop = '8px'; }
 }
@@ -2834,10 +2958,14 @@ function wkCommit() {
     if (band.length > BAND_MAX) { wkRedraw('Band color: up to ' + BAND_MAX + ' letters.', true); focusLater('#wkband'); return; }
     if (band) m.band = band;
   }
-  if (!(ed.i >= 0 && ed.i < w.moves.length) && w.moves.length < MOVES_MAX && isNum(w.pausedAt)) wkResume(w, new Date());     // adding a move resumes (033, D268; not if refused, 033-2)
   // The time it was added (032, G032-6): the phone's clock at Add this move; a move changed keeps its time.
-  if (ed.i >= 0 && ed.i < w.moves.length) { if (hmOk(w.moves[ed.i].t)) m.t = w.moves[ed.i].t; }
+  if (ed.i >= 0 && ed.i < w.moves.length) { if (hmOk(w.moves[ed.i].t)) m.t = w.moves[ed.i].t; if (isNum(w.moves[ed.i].rj)) m.rj = w.moves[ed.i].rj; }
   else m.t = timeStr(new Date());     // always a real time of day
+  if (!(ed.i >= 0 && ed.i < w.moves.length) && planEdit(ed)) {          // a plan's move (035): once only; otherwise an ordinary move (035-2, AL F3)
+    if (planDone(w)[ed.rj]) { w.edit = null; wkTouch(); storeDraft(true); wkRedraw('That move is already done.', true); return; }
+    m.rj = ed.rj;
+  }
+  if (!(ed.i >= 0 && ed.i < w.moves.length) && w.moves.length < MOVES_MAX && isNum(w.pausedAt)) wkResume(w, new Date());     // adding a move resumes (033, D268; not if refused, 033-2; 035 after the plan check)
   if (ed.i >= 0 && ed.i < w.moves.length) w.moves[ed.i] = m;
   else if (w.moves.length < MOVES_MAX) w.moves.push(m);
   else { wkRedraw('A workout can hold up to ' + MOVES_MAX + ' moves.', true); return; }
@@ -2845,6 +2973,7 @@ function wkCommit() {
   wkTouch();
   storeDraft(true);
   wkRedraw('', false);
+  if (runPlan(state.running)) shieldTaps(TAP_SHIELD_MS);     // the list moves up under the finger (035-2, AL F1)
 }
 // Pause and Resume (033): the pause is kept with the moves; a break under a minute is not kept (G033-1).
 function wkPause(w) {
@@ -2885,8 +3014,37 @@ function wireWorkout() {
     }
     if (t.id === 'wkadd') { state.wk.allNames = false; w.edit = emptyEdit(-1, null); wkTouch(); storeDraft(true); wkRedraw('', false); return; }
     if (t.id === 'wkallnames') { state.wk.allNames = true; wkRedraw('', false); return; }     // 032-2 (D263)
+    if (t.classList.contains('wkdone') || t.classList.contains('wktname')) {                       // Still to do (035)
+      var pj = Number(t.getAttribute('data-j')), ppl = runPlan(state.running);
+      if (!ppl || !ppl[pj] || planDone(w)[pj]) { wkRedraw('', false); return; }
+      if (w.edit && editPending(w)) { wkRedraw('Finish the move you are on first: tap ' + okWord(w.edit) + ', or Cancel.', true); return; }
+      if (state.wk.names === null) { wkRedraw('One moment: the numbers from last time are still being read. Tap again.', true); return; }
+      if (state.wk.namesFailed && t.classList.contains('wkdone') && moveKind(ppl[pj].k).boxes.length) { wkRedraw('The numbers from last time could not be read on this phone just now. Tap the move’s name to put them in, or go back to Intraday and open the workout again.', true); return; }
+      var lm = lastFor(ppl[pj]);
+      if (t.classList.contains('wktname')) {                                                      // its box, filled in (D289)
+        var re = emptyEdit(-1, lm.k);
+        re.name = lm.name;
+        MOVE_FIELDS.forEach(function (f) { if (typeof lm[f] === 'string') re[f] = lm[f]; });
+        re.each = lm.each === true;
+        re.band = typeof lm.band === 'string' ? lm.band : '';
+        re.rj = pj;
+        re.base = editSig(re);                                                                       // 035-2
+        state.wk.allNames = false;
+        w.edit = re; wkTouch(); storeDraft(true); wkRedraw('', false);
+        return;
+      }
+      if (w.moves.length >= MOVES_MAX) { wkRedraw('A workout can hold up to ' + MOVES_MAX + ' moves.', true); return; }
+      if (isNum(w.pausedAt)) wkResume(w, new Date());                                             // Done while paused resumes (G035-7)
+      lm.t = timeStr(new Date());                                                                  // the time of the tap (G035-4)
+      lm.rj = pj;
+      w.moves.push(lm);
+      w.edit = null;
+      wkTouch(); storeDraft(true); wkRedraw('', false);
+      shieldTaps(TAP_SHIELD_MS);                                                                   // a second tap does not reach the next row
+      return;
+    }
     if (t.classList.contains('wkmove')) {
-      if (w.edit && editPending(w) && w.edit.i !== Number(t.getAttribute('data-i'))) { wkRedraw('Finish the move you are on first: tap ' + (w.edit.i >= 0 ? 'Done' : 'Add this move') + ', or Cancel.', true); return; }
+      if (w.edit && editPending(w) && w.edit.i !== Number(t.getAttribute('data-i'))) { wkRedraw('Finish the move you are on first: tap ' + okWord(w.edit) + ', or Cancel.', true); return; }
       var i = Number(t.getAttribute('data-i')), m = w.moves[i];
       if (!m) return;
       state.wk.allNames = false;     // 032-2
@@ -2928,7 +3086,7 @@ function wireWorkout() {
       return;
     }
     if (t.id === 'wkeach') { w.edit.each = !w.edit.each; wkTouch(); storeDraft(true); wkRedraw('', false); return; }
-    if (t.id === 'wkcancel') { w.edit = null; wkTouch(); storeDraft(true); wkRedraw('', false); return; }
+    if (t.id === 'wkcancel') { w.edit = null; wkTouch(); storeDraft(true); wkRedraw('', false); if (runPlan(state.running)) shieldTaps(TAP_SHIELD_MS); return; }     // 035-2
     if (t.id === 'wkoutbtn') {
       if (w.edit.i >= 0 && w.edit.i < w.moves.length) {
         var gone = w.edit.i;
@@ -2937,6 +3095,7 @@ function wireWorkout() {
         if (isNum(w.pausedAt) && isNum(w.pausedI) && w.pausedI > gone) w.pausedI--;
       }
       w.edit = null; wkTouch(); storeDraft(true); wkRedraw('', false);
+      if (runPlan(state.running)) shieldTaps(TAP_SHIELD_MS);     // 035-2 (AL F1)
       return;
     }
     if (t.id === 'wkok') { wkCommit(); return; }
@@ -2967,7 +3126,7 @@ function endWorkout() {
   var w = wkOf(run);
   if (w && editPending(w)) {
     wkRedraw(w.edit.i >= 0 ? 'Your change to ' + (w.moves[w.edit.i] ? w.moves[w.edit.i].name : 'this move') + ' is not kept yet: tap Done, or Cancel, then End workout.'
-                           : 'The move you are on is not in the list yet: tap Add this move, or Cancel, then End workout.', true);
+                           : 'The move you are on is not in the list yet: tap ' + okWord(w.edit) + ', or Cancel, then End workout.', true);
     return;
   }
   var now = new Date();
@@ -2997,7 +3156,7 @@ function endWorkout() {
   var endOut = { key: endV.key, seq: endV.seq, status: 'waiting', payload: payloadFor(endV) };
   var bar = { id: null, date: dateStr(now), time: timeStr(now), undone: false, test: run.test, screen: 'Intraday',
               summary: runName(run.kind) + ' ended (' + whenOf(run.startDate, run.startTime, dateStr(now)) + ' to ' + ampm(timeStr(endD)) + ')' +
-                       (moves.length ? ', ' + movesCount(moves.length) : ', no moves'),
+                       (moves.length ? ', ' + movesCount(moves.length) : ', no moves') + leftWords(planLeft(run, w).length),     // 035
               savedDate: dateStr(now), savedTime: timeStr(now), until: nextDayStart(now).getTime(), started: false,
               ended: { id: run.id, version: endV.version, before: run } };
   if (moves.length) bar.ended.moves = moves;
@@ -4154,7 +4313,36 @@ function catchUpRoutines() {
     state.rt = { read: true, ok: ok, value: v === undefined ? { list: [], removed: [] } : (ok ? clone(v) : null), known: stable(v) };
     if (state.mu && state.mu.view === 'redit') { muList(OTHER_COPY_ROUTINES, true); render(); window.scrollTo(0, 0); }
     else if (state.mu && state.mu.view === 'list') muRedraw(null);
+    if (!state.mu) render();                                             // Workout's choices (035)
   }, function () { /* read again next time */ });
+}
+// The routines offered under Workout (035, G035-10): those in use, in My usual ones' order; none while an entry is changed.
+function routineChoices() {
+  if (fixOn('Intraday') || !state.rt || !state.rt.ok || !state.rt.value) return [];
+  return state.rt.value.list;
+}
+function routineById(id) {
+  if (!state.rt || !state.rt.ok || !state.rt.value) return null;
+  return state.rt.value.list.filter(function (r) { return r.id === id; })[0] || null;
+}
+var rtChoiceSig = null;
+function drawRoutineChoices() {
+  var list = routineChoices();
+  var sig = JSON.stringify(list.map(function (r) { return [r.id, r.name, r.moves.length]; }));
+  if (sig === rtChoiceSig) return;
+  rtChoiceSig = sig;
+  var c = el('c-Workout');
+  Array.prototype.slice.call(c.querySelectorAll('.rtchoice')).forEach(function (b) { b.parentNode.removeChild(b); });
+  var first = c.firstChild;
+  list.forEach(function (r) {
+    var b = document.createElement('button');
+    b.type = 'button'; b.className = 'choice rtchoice';
+    b.setAttribute('data-rt', r.id); b.setAttribute('data-name', r.name); b.setAttribute('aria-pressed', 'false');
+    var t = document.createElement('span'); t.className = 'cn'; t.textContent = r.name; b.appendChild(t);
+    var s = document.createElement('span'); s.className = 'cc'; s.textContent = 'routine, ' + movesCount(r.moves.length) + ': tap Done as you finish each'; b.appendChild(s);
+    var k = document.createElement('span'); k.className = 'chk'; k.textContent = '✓'; b.appendChild(k);
+    c.insertBefore(b, first);
+  });
 }
 function loadRoutines() {
   return DL.get('kv', 'routines').then(function (v) {
@@ -4303,7 +4491,7 @@ function drawRoutineEdit(sc, add, m, locked) {
     var am = add(sc, 'button', 'muadd', '+ Add a move');
     am.type = 'button'; am.id = 'muraddmove'; am.style.marginTop = '10px';
   } else add(sc, 'div', 'hint', 'A routine can hold up to ' + MOVES_MAX + ' moves.');
-  add(sc, 'div', 'hint', 'With the next update, routines come to Workout: each move will fill in the numbers from the last time you did it.');
+  add(sc, 'div', 'hint', 'When you start it from Workout, each move fills in the numbers from the last time you did it.');     // 035
   var sv = add(sc, 'button', 'save', m.id ? 'Save changes to ' + m.origName : 'Save routine');
   sv.type = 'button'; sv.id = 'mursave';
   if (locked) sv.disabled = true;
@@ -5190,12 +5378,14 @@ function renderIntraday() {
   el('p-Workout').hidden = !(dr.workout && !runShown);
   el('mu-Workout').hidden = fixOn('Intraday');                          // 034 (G034-7), as under Shake and Medicine
   // A kind kept from an earlier page (G028-6), or recorded in the entry being changed, is offered as its own choice.
-  var xk = dr.workout && dr.workout.kind && WORKOUT_KINDS.indexOf(dr.workout.kind) < 0 ? dr.workout.kind : null;
+  drawRoutineChoices();                                                                             // 035
+  var xk = dr.workout && dr.workout.kind && !dr.workout.rt && WORKOUT_KINDS.indexOf(dr.workout.kind) < 0 ? dr.workout.kind : null;
   var xb = el('wk-extra');
   xb.hidden = !xk;
   if (xk) { xb.setAttribute('data-name', xk); xb.querySelector('.cn').textContent = xk; }
   Array.prototype.forEach.call(document.querySelectorAll('#p-Workout .choice'), function (c) {
-    var on = !!dr.workout && dr.workout.kind === c.getAttribute('data-name');
+    var on = !!dr.workout && (c.getAttribute('data-rt') ? dr.workout.rt === c.getAttribute('data-rt')
+                                                        : !dr.workout.rt && dr.workout.kind === c.getAttribute('data-name'));     // 035
     c.classList.toggle('on', on);
     c.setAttribute('aria-pressed', on ? 'true' : 'false');
   });
@@ -5222,14 +5412,19 @@ function renderIntraday() {
     var r = state.running;
     rl.hidden = false;
     var mn = wkOf(r) ? wkOf(r).moves.length : 0;
+    var rpl = runPlan(r), rleft = rpl ? planLeft(r, wkOf(r)).length : 0;                          // a routine (035)
     var pz = r.kind !== 'Walk' && wkOf(r) && msOk(wkOf(r).pausedAt) ? wkOf(r).pausedAt : null;     // paused (033)
     var pzE2 = pauseEnd(r, wkOf(r));
     rt.textContent = dr.endTick
       ? (pzE2 !== null && !dr.edited ? 'The workout ends at ' + hmAt(pzE2) + ', when you paused, when you tap Save'
-                          : (r.kind === 'Walk' ? 'The walk' : 'The workout') + ' ends at the time at the top when you tap Save') + (mn ? ', with its ' + movesCount(mn) : '') + '.'
+                          : (r.kind === 'Walk' ? 'The walk' : 'The workout') + ' ends at the time at the top when you tap Save') + (mn ? ', with its ' + movesCount(mn) : '') +
+        (rleft ? '; ' + movesCount(rleft) + ' not done will be left out' : '') + '.'
       : r.kind === 'Walk' ? 'Walk started ' + whenOf(r.startDate, r.startTime, dateStr(new Date())) + '. Tap End walk when you finish.'
-      : pz ? runName(r.kind) + ' paused since ' + whenOf(dateStr(new Date(pz)), timeStr(new Date(pz)), dateStr(new Date())) + (mn ? ', ' + movesCount(mn) + ' so far' : '') +
+      : pz ? runName(r.kind) + ' paused since ' + whenOf(dateStr(new Date(pz)), timeStr(new Date(pz)), dateStr(new Date())) +
+             (rpl ? ', ' + (rpl.length - rleft) + ' of ' + rpl.length + ' done' : (mn ? ', ' + movesCount(mn) + ' so far' : '')) +     // 035-2
              '. Tap Open to resume or end it.'
+      : rpl ? runName(r.kind) + ' started ' + whenOf(r.startDate, r.startTime, dateStr(new Date())) + ', ' + (rpl.length - rleft) + ' of ' + rpl.length + ' done' +
+              '. Tap Open to tap through it; End workout when you finish.'
       : runName(r.kind) + ' started ' + whenOf(r.startDate, r.startTime, dateStr(new Date())) + (mn ? ', ' + movesCount(mn) + ' so far' : '') +
         '. Tap Open to add your moves; End workout when you finish.';
   } else if (state.running) {
@@ -5469,11 +5664,25 @@ function buildButtons() {
       touch();
       if (!idr().workout) idr().workout = { kind: null };
       idr().workout.kind = kind;
+      delete idr().workout.rt;                                           // not a routine (035)
       el('nothing').hidden = true;
       storeDraft(true);
       render();
     });
     el('c-Workout').appendChild(b);
+  });
+  el('c-Workout').addEventListener('click', function (e) {             // a routine (035, D289)
+    var b = e.target && e.target.closest ? e.target.closest('.rtchoice') : null;
+    if (!b || fixOn('Intraday')) return;
+    var rr = routineById(b.getAttribute('data-rt'));
+    if (!rr) return;
+    touch();
+    if (!idr().workout) idr().workout = { kind: null };
+    idr().workout.kind = rr.name;
+    idr().workout.rt = rr.id;
+    el('nothing').hidden = true;
+    storeDraft(true);
+    render();
   });
   el('wkopen').addEventListener('click', openWorkout);      // 028
   el('mu-Workout').addEventListener('click', function () { openUsuals('Workout'); });     // 034 (G034-7)
@@ -6259,6 +6468,7 @@ function start() {
       state.noStorage = !res.opens;
       buildUsualChoices();
       render();
+      loadRoutines().then(function () { render(); });                  // routines under Workout (035)
       askToKeepStorage();
       if (state.noStorage || missed.length) showUnread(true);
       // A link arriving is taken even then: applyLink reads the stored link itself (Q37).
