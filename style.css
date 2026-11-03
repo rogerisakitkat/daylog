@@ -299,3 +299,16 @@ body.wkopen main > :not(#sc-Workout):not(#status):not(#error) { display: none !i
 .wkout { background: none; border: 0; color: var(--bad); font-weight: 600; font-size: 15px; padding: 6px 0; }
 .wknote { margin: 8px 0 0; font-size: 14px; color: var(--bad); }
 
+
+/* 038: the move running, its set boxes, Start, left out */
+.wknow { margin: 10px 12px 0; padding: 10px 12px; border-radius: 12px; background: #e7f4ea; border: 1px solid #b9dcc2; }
+.wknow b { display: block; font-size: 16px; overflow-wrap: anywhere; }
+.wknow span { display: block; font-size: 14.5px; }
+.wknow .hint2 { font-size: 13px; color: var(--muted); margin-top: 6px; }
+.wksets { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.wksetc { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.wksetc .wksn { font-size: 12px; color: var(--muted); }
+.wkset { min-width: 48px; height: 44px; padding: 0 8px; border: 2px solid var(--accent); background: #fff; color: var(--ink); border-radius: 8px; font-size: 16px; font-weight: 700; }
+.wkset.on { background: var(--accent); color: #fff; }
+#wknow #wkstop { margin-top: 8px; }
+.wkstartj { flex: none; padding: 9px 14px; font-size: 15px; }
