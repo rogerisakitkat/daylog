@@ -260,7 +260,14 @@
 // ordinary box once the workout is no longer that routine's, and its move is kept (F3); a long routine name wraps (F4);
 // paused, "1 of 5 done"; nothing done, "no moves" on Intraday too; last time unreadable: the box says so, a stretch can
 // still be done; a box opened from a name and left as it was does not hold up End or another Done.
-var PAGE_VERSION = '035-2';
+// 036 (session 34, R131, D297 to D299): the time set with Edit at the top of Intraday, Morning and Evening is taken as
+// today (5:00 AM to 5:00 AM, R75): before 5:00 AM it is the early morning after the day's date, otherwise the day's date.
+// A time that has not come yet is turned away on the number pad, and the entry is never moved to the day before (it was,
+// by editedTime, the most recent moment with that clock time). An earlier day's entry keeps its day (timeOnDay, R97).
+// In the hour that repeats when the clocks go back, the later one if it has come, else the earlier (todayMoment).
+// 036-2 (Agent AM): a time before 5:00 AM typed after 5:00 AM is said to belong to the night, not to be still to come
+// (F2); a time the clocks will skip tonight is still to come.
+var PAGE_VERSION = '036-2';
 var SCREENS = ['Morning', 'Intraday', 'Evening'];
 var SCORE_ROWS = ['Mind', 'Body', 'Balance'];
 var MORNING_SCORES = [{ label: 'Quality', key: 'Sleep quality' }, { label: 'Amount', key: 'Sleep amount' }];
@@ -6108,6 +6115,22 @@ function timeOnDay(four, day) {
   if (timeStr(later) === time && dateStr(later) === date) t = later;            // the hour that repeats: the later one, as editedTime (Agent Y, 2)
   return { date: date, time: time, at: t.getTime() };
 }
+// A time typed with Edit for today's entry (036, R131): on today, the day that runs 5:00 AM to 5:00 AM; refused if it has
+// not come yet. now's minute counts as come (at 5:14:30 PM, 514 PM is fine).
+function todayMoment(four, now) {
+  var H = Number(four.slice(0, 2)), M = Number(four.slice(2, 4));
+  if (H > 23 || M > 59) return null;
+  var time = p2(H) + ':' + p2(M);
+  var day = logDayOf(dateStr(now), timeStr(now));
+  var date = H < DAY_STARTS_AT ? dayAfter(day) : day;
+  var t = momentOf(date, time);
+  var nowMin = new Date(now.getTime() - now.getTime() % 60000);     // not setSeconds: in the hour that repeats it jumps back an hour
+  if (timeStr(t) !== time || dateStr(t) !== date) return t.getTime() > nowMin.getTime() ? { future: true, time: time } : { skipped: true };     // skipped that night
+  var later = new Date(t.getTime() + 3600000);
+  if (timeStr(later) === time && dateStr(later) === date && later.getTime() <= nowMin.getTime()) t = later;     // the hour that repeats
+  if (t.getTime() > nowMin.getTime()) return { future: true, time: time };
+  return { date: date, time: time, at: t.getTime() };
+}
 function openPad() {
   closeTpad();
   el('pad').hidden = false;
@@ -6122,7 +6145,16 @@ function padShowing(id) { var p = el(id); return !p.hidden && p.offsetParent !==
 function setFromPad(half) {
   var four = typedTime(el('padinput').value.trim(), half);
   var ed = earlierFixDay();
-  var got = four ? (ed ? timeOnDay(four, ed) : editedTime(four, new Date())) : null;
+  var got = four ? (ed ? timeOnDay(four, ed) : todayMoment(four, new Date())) : null;
+  if (got && got.future) {                                                         // 036, R131
+    var early = Number(got.time.slice(0, 2)) < DAY_STARTS_AT && new Date().getHours() >= DAY_STARTS_AT;     // 036-2 (AM F2)
+    el('padmsg').textContent = (early ?
+      'Times before 5:00 AM count for the night: last night’s ' + ampm(got.time) + ' belongs to yesterday, and tonight’s hasn’t come yet. ' :
+      ampm(got.time) + ' hasn’t come yet today, so it can’t be used. Check the time and AM or PM. ') +
+      'Something from last night: log it now and put its time in Comments.';
+    el('padmsg').className = 'padmsg bad';
+    return;
+  }
   if (got && got.skipped) {
     el('padmsg').textContent = 'There was no ' + ampm(four.slice(0, 2) + ':' + four.slice(2)) + ' that night: the clocks went forward an hour. Type another time.';
     el('padmsg').className = 'padmsg bad';
